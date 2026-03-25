@@ -22,14 +22,14 @@ export default function Home() {
       <h2>API 키 설정</h2>
       <p>
         <a href="https://opendart.fss.or.kr/">opendart.fss.or.kr</a>에서 무료로
-        API 키를 발급받은 후, Claude에서 대화 시작 시 다음과 같이 입력하세요:
+        API 키를 발급받은 후, 커넥터 URL에 포함하세요:
       </p>
-      <blockquote style={{ background: "#f5f5f5", padding: "1rem", borderLeft: "4px solid #333" }}>
-        &quot;OpenDART API 키를 설정해줘: <code>YOUR_API_KEY</code>&quot;
-      </blockquote>
+      <pre style={{ background: "#f5f5f5", padding: "1rem", overflow: "auto" }}>
+        https://your-project.vercel.app/api/mcp?opendart_key=YOUR_API_KEY
+      </pre>
       <p>
-        Claude가 <code>set_api_key</code> 도구를 호출하여 세션 동안 자동으로
-        사용합니다. 매번 키를 입력할 필요 없습니다.
+        이렇게 하면 대화에서 별도 설정 없이 바로 사용할 수 있습니다.
+        또는 대화 중 <code>set_api_key</code> 도구로도 설정할 수 있습니다.
       </p>
 
       <h2>MCP Endpoint</h2>

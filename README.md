@@ -40,8 +40,8 @@ vercel deploy
 
 1. [claude.ai](https://claude.ai) 접속
 2. Settings > Connectors > Add custom connector
-3. URL 입력: `https://your-project.vercel.app/api/mcp`
-4. 연결 완료!
+3. URL 입력: `https://your-project.vercel.app/api/mcp?opendart_key=YOUR_API_KEY`
+4. 연결 완료! 별도 설정 없이 바로 사용 가능
 
 ## API Key 사용 방법
 
@@ -49,17 +49,21 @@ vercel deploy
 
 Vercel 대시보드에서 `OPENDART_API_KEY` 환경변수를 설정하면 모든 도구가 자동으로 사용합니다.
 
-### 방법 B: 사용자별 API 키 (공유 서버)
+### 방법 B: URL에 API 키 포함 (추천, 공유 서버)
 
-서버를 다른 사람에게 공유할 때 사용합니다. 각 사용자가 자신의 API 키를 사용하므로 서버 운영자의 API 한도를 보호합니다.
+커넥터 URL에 API 키를 포함하면 대화에서 별도 설정이 필요 없습니다:
 
-Claude에서 대화 시작 시:
+```
+https://your-project.vercel.app/api/mcp?opendart_key=YOUR_API_KEY
+```
 
-> "OpenDART API 키를 설정해줘: `YOUR_API_KEY`"
+각 사용자가 자신의 키를 URL에 넣어 커넥터를 등록하면, 서버 운영자의 API 한도를 보호합니다.
 
-Claude가 `set_api_key` 도구를 호출하여 세션 동안 자동으로 사용합니다.
+### 방법 C: 대화 중 설정
 
-**우선순위**: 도구별 `api_key` 파라미터 > 세션 키 (`set_api_key`) > 서버 환경변수
+대화 중 `set_api_key` 도구를 호출하여 설정할 수도 있습니다.
+
+**우선순위**: 도구별 `api_key` 파라미터 > URL 키 / 세션 키 > 서버 환경변수
 
 ## Tools
 
