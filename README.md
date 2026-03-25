@@ -2,20 +2,15 @@
 
 한국 금융감독원 [OpenDART API](https://opendart.fss.or.kr/)를 Claude에서 바로 사용할 수 있는 MCP(Model Context Protocol) 서버입니다.
 
-Vercel에 배포하면 ngrok 없이 Claude Custom Connector로 바로 연결할 수 있습니다.
-
-> [RealYoungk/opendart-mcp](https://github.com/RealYoungk/opendart-mcp)를 기반으로 TypeScript + Next.js로 재구현하고, Vercel 배포 및 기능을 확장한 버전입니다.
+API를 발급받아 Claude 커스텀 커넥터로 바로 연결할 수 있습니다.
 
 ## Features
 
-- **~83개 도구**: 원본 Python 버전과 동일한 수준의 API 커버리지
-- **Vercel 배포**: ngrok/터널링 없이 Custom Connector로 바로 연결
-- **URL 기반 API 키**: 커넥터 URL에 키를 포함하여 설정 없이 즉시 사용
-- **마크다운 출력**: Claude에서 깔끔하게 렌더링되는 테이블 형태
-- **한/영 에러 메시지**: 구체적인 오류 안내 (타임아웃, 네트워크 등 분류)
-- **자동 재시도**: API 오류 시 최대 3회 재시도
+- **Open DART API 전부 지원**: Open DART에서 제공하는 API(83개)를 전부 지원합니다.
+- **Vercel 배포**: ngrok/터널링 없이 커스텀 커넥터로 바로 연결 가능합니다.
+- **URL 기반 API 키**: 커넥터 URL에 키를 포함하여 설정 없이 즉시 사용 가능합니다.
+- **마크다운 출력**: Claude에서 깔끔하게 렌더링되는 테이블 형태로 출력합니다.
 - **Corp Code 캐싱**: 9만+ 기업 목록을 인메모리 캐싱 (24시간 TTL)
-- **인코딩 자동 감지**: EUC-KR/CP949/UTF-8 XML 자동 처리
 
 ## Quick Start
 
@@ -23,48 +18,12 @@ Vercel에 배포하면 ngrok 없이 Claude Custom Connector로 바로 연결할 
 
 [OpenDART](https://opendart.fss.or.kr/)에서 회원가입 후 API 인증키를 발급받으세요.
 
-### 2. Vercel에 배포
-
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/procpalee/OpenDART-MCP-Server)
-
-또는 CLI로 배포:
-
-```bash
-git clone https://github.com/procpalee/OpenDART-MCP-Server.git
-cd OpenDART-MCP-Server
-npm install
-vercel link
-vercel deploy
-```
-
-### 3. Claude에 연결
+### 2. Claude에 연결
 
 1. [claude.ai](https://claude.ai) 접속
-2. Settings > Connectors > Add custom connector
+2. 사용자 지정 > 커넥터 > 사용자 지정 커넥터 추가
 3. URL 입력: `https://your-project.vercel.app/api/mcp?opendart_key=YOUR_API_KEY`
 4. 연결 완료! 별도 설정 없이 바로 사용 가능
-
-## API Key 사용 방법
-
-### 방법 A: URL에 API 키 포함 (추천)
-
-커넥터 URL에 API 키를 포함하면 대화에서 별도 설정이 필요 없습니다:
-
-```
-https://your-project.vercel.app/api/mcp?opendart_key=YOUR_API_KEY
-```
-
-다른 사용자에게 서버를 공유할 때, 각 사용자가 자신의 키를 URL에 넣어 커넥터를 등록하면 서버 운영자의 API 한도를 보호할 수 있습니다.
-
-### 방법 B: 서버에 환경변수 설정 (나만 사용)
-
-Vercel 대시보드에서 `OPENDART_API_KEY` 환경변수를 설정하면 모든 도구가 자동으로 사용합니다.
-
-### 방법 C: 대화 중 설정
-
-대화 중 `set_api_key` 도구를 호출하여 설정할 수도 있습니다.
-
-**우선순위**: 도구별 `api_key` 파라미터 > URL 키 / 세션 키 > 서버 환경변수
 
 ## Tools
 
@@ -141,20 +100,11 @@ Vercel 대시보드에서 `OPENDART_API_KEY` 환경변수를 설정하면 모든
 
 Claude에서 다음과 같이 사용하세요:
 
-- "삼성전자의 2024년 재무제표를 보여줘"
-- "SK하이닉스의 최대주주 현황을 알려줘"
-- "카카오의 최근 공시를 검색해줘"
-- "현대자동차의 임원 보수 현황을 보여줘"
+- "삼성전자의 20XX년 재무제표를 보여줘"
+- "SK하이닉스의 최신 최대주주 현황을 알려줘"
+- "카카오의 최근 공시 10개를 검색해줘"
+- "현대자동차의 20XX년 임원 보수 현황을 보여줘"
 - "LG에너지솔루션에 전환사채 발행 결정이 있었는지 확인해줘"
-
-## Development
-
-```bash
-npm install
-# .env.local에 OPENDART_API_KEY=your_key 추가 (선택)
-npm run dev
-# http://localhost:3000/api/mcp 에서 MCP 서버 실행
-```
 
 ## Tech Stack
 
@@ -162,11 +112,6 @@ npm run dev
 - **MCP**: mcp-handler + @modelcontextprotocol/sdk
 - **Deploy**: Vercel (Streamable HTTP, Seoul region 권장)
 - **ZIP**: fflate (corp code XML 압축 해제)
-
-## Credits
-
-- [RealYoungk/opendart-mcp](https://github.com/RealYoungk/opendart-mcp) — 원본 Python MCP 서버
-- [OpenDART API](https://opendart.fss.or.kr/) — 금융감독원 전자공시시스템
 
 ## License
 
