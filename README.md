@@ -6,8 +6,9 @@ Vercel에 배포하면 ngrok 없이 Claude Custom Connector로 바로 연결할 
 
 ## Features
 
-- **29개 도구**: 회사 검색, 재무제표, 공시 검색, 주주 정보, 주요 사항 보고 등
+- **31개 도구**: 회사 검색, 재무제표, 공시 검색, 주주 정보, 주요 사항 보고 등
 - **워크플로우 도구**: 회사 이름 검색, 재무 요약, 기업 비교, 최근 공시 요약
+- **사용자별 API 키**: `set_api_key`로 각자의 API 키를 사용 — 서버 공유 가능
 - **마크다운 출력**: Claude에서 깔끔하게 렌더링되는 테이블 형태
 - **한/영 에러 메시지**: 에러 발생 시 한국어와 영어로 안내
 - **재시도 로직**: API 오류 시 자동 재시도
@@ -30,9 +31,10 @@ git clone <this-repo>
 cd opendart-mcp
 npm install
 vercel link
-vercel env add OPENDART_API_KEY  # API 키 입력
 vercel deploy
 ```
+
+> **참고**: `OPENDART_API_KEY` 환경변수는 선택사항입니다. 설정하지 않으면 사용자가 `set_api_key`로 각자의 키를 사용합니다.
 
 ### 3. Claude에 연결
 
@@ -41,7 +43,32 @@ vercel deploy
 3. URL 입력: `https://your-project.vercel.app/api/mcp`
 4. 연결 완료!
 
+## API Key 사용 방법
+
+### 방법 A: 서버에 환경변수 설정 (나만 사용)
+
+Vercel 대시보드에서 `OPENDART_API_KEY` 환경변수를 설정하면 모든 도구가 자동으로 사용합니다.
+
+### 방법 B: 사용자별 API 키 (공유 서버)
+
+서버를 다른 사람에게 공유할 때 사용합니다. 각 사용자가 자신의 API 키를 사용하므로 서버 운영자의 API 한도를 보호합니다.
+
+Claude에서 대화 시작 시:
+
+> "OpenDART API 키를 설정해줘: `YOUR_API_KEY`"
+
+Claude가 `set_api_key` 도구를 호출하여 세션 동안 자동으로 사용합니다.
+
+**우선순위**: 도구별 `api_key` 파라미터 > 세션 키 (`set_api_key`) > 서버 환경변수
+
 ## Tools
+
+### Config Tools
+
+| Tool | 설명 |
+|------|------|
+| `set_api_key` | OpenDART API 키를 세션에 설정 |
+| `get_api_key_status` | API 키 설정 여부 확인 |
 
 ### Workflow Tools (추천)
 
@@ -71,16 +98,11 @@ Claude에서 다음과 같이 사용하세요:
 - "SK하이닉스의 최근 30일간 공시를 보여줘"
 - "LG에너지솔루션의 최대주주 현황을 알려줘"
 
-## API Key
-
-기본적으로 서버의 `OPENDART_API_KEY` 환경변수를 사용합니다.
-각 도구 호출 시 `api_key` 파라미터로 개인 키를 전달할 수도 있습니다.
-
 ## Development
 
 ```bash
 npm install
-# .env.local에 OPENDART_API_KEY=your_key 추가
+# .env.local에 OPENDART_API_KEY=your_key 추가 (선택)
 npm run dev
 # http://localhost:3000/api/mcp 에서 MCP 서버 실행
 ```

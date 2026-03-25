@@ -4,13 +4,22 @@ const BASE_URL = "https://opendart.fss.or.kr/api";
 const MAX_RETRIES = 2;
 const RETRY_DELAYS = [1000, 3000];
 
+let sessionApiKey: string | undefined;
+
+export function setSessionApiKey(key: string): void {
+  sessionApiKey = key;
+}
+
+export function getSessionApiKey(): string | undefined {
+  return sessionApiKey;
+}
+
 export function resolveApiKey(toolParamKey?: string): string {
-  const key = toolParamKey || process.env.OPENDART_API_KEY;
+  const key = toolParamKey || sessionApiKey || process.env.OPENDART_API_KEY;
   if (!key) {
     throw new Error(
-      "[OpenDART] API key is required. " +
-      "Set OPENDART_API_KEY environment variable or pass api_key parameter. / " +
-      "API 키가 필요합니다. OPENDART_API_KEY 환경변수를 설정하거나 api_key 파라미터를 전달하세요."
+      "[OpenDART] API key required. Get one at https://opendart.fss.or.kr/ and call set_api_key tool first. / " +
+      "API 키가 필요합니다. https://opendart.fss.or.kr/ 에서 발급 후 set_api_key 도구를 먼저 호출하세요."
     );
   }
   return key;
