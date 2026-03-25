@@ -7,6 +7,7 @@ interface CorpCodeCache {
   byCorpCode: Map<string, CorpCodeEntry>;
   byStockCode: Map<string, CorpCodeEntry>;
   updatedAt: number;
+  xmlPreview: string; // first 500 chars of XML for diagnostics
 }
 
 let cache: CorpCodeCache | null = null;
@@ -15,17 +16,29 @@ const TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 function parseCorpCodeXml(xml: string): CorpCodeEntry[] {
   const entries: CorpCodeEntry[] = [];
-  const regex = /<list>\s*<corp_code>([^<]*)<\/corp_code>\s*<corp_name>([^<]*)<\/corp_name>\s*<stock_code>([^<]*)<\/stock_code>\s*<modify_date>([^<]*)<\/modify_date>\s*<\/list>/g;
 
-  let match;
-  while ((match = regex.exec(xml)) !== null) {
-    entries.push({
-      corp_code: match[1].trim(),
-      corp_name: match[2].trim(),
-      stock_code: match[3].trim(),
-      modify_date: match[4].trim(),
-    });
+  // Remove BOM if present
+  const cleanXml = xml.replace(/^\uFEFF/, "");
+
+  // Split-based parsing: more robust than single regex
+  const chunks = cleanXml.split(/<\/list>/i);
+
+  for (const chunk of chunks) {
+    const corpCode = chunk.match(/<corp_code>\s*([^<]*?)\s*<\/corp_code>/i);
+    const corpName = chunk.match(/<corp_name>\s*([^<]*?)\s*<\/corp_name>/i);
+    const stockCode = chunk.match(/<stock_code>\s*([^<]*?)\s*<\/stock_code>/i);
+    const modifyDate = chunk.match(/<modify_date>\s*([^<]*?)\s*<\/modify_date>/i);
+
+    if (corpCode && corpName) {
+      entries.push({
+        corp_code: corpCode[1].trim(),
+        corp_name: corpName[1].trim(),
+        stock_code: stockCode?.[1]?.trim() || "",
+        modify_date: modifyDate?.[1]?.trim() || "",
+      });
+    }
   }
+
   return entries;
 }
 
@@ -34,7 +47,6 @@ export async function loadCorpCodes(apiKey?: string): Promise<CorpCodeCache> {
     return cache;
   }
 
-  // 이미 로딩 중이면 같은 Promise 반환 (중복 다운로드 방지)
   if (loadingPromise) return loadingPromise;
 
   loadingPromise = (async () => {
@@ -43,11 +55,46 @@ export async function loadCorpCodes(apiKey?: string): Promise<CorpCodeCache> {
       const buffer = await getBinary("corpCode", {}, key);
       const uint8 = new Uint8Array(buffer);
 
+      // Check if response is actually JSON (API error) instead of ZIP
+      // ZIP files start with PK (0x50, 0x4B)
+      if (uint8[0] !== 0x50 || uint8[1] !== 0x4B) {
+        const text = new TextDecoder("utf-8").decode(uint8);
+        let errorMsg = "corpCode API did not return a ZIP file.";
+        try {
+          const json = JSON.parse(text);
+          errorMsg = `corpCode API error: ${json.message || json.status || text.slice(0, 200)}`;
+        } catch {
+          errorMsg = `corpCode API returned unexpected data: ${text.slice(0, 200)}`;
+        }
+        // Set cache with 0 entries but include error info in xmlPreview
+        cache = {
+          entries: [],
+          byCorpCode: new Map(),
+          byStockCode: new Map(),
+          updatedAt: 0, // force retry on next call
+          xmlPreview: errorMsg,
+        };
+        return cache;
+      }
+
       const unzipped = unzipSync(uint8);
-      const xmlFileName = Object.keys(unzipped)[0];
+      const fileNames = Object.keys(unzipped);
+      const xmlFileName = fileNames.find((f) => f.toLowerCase().endsWith(".xml")) || fileNames[0];
+
+      if (!xmlFileName || !unzipped[xmlFileName]) {
+        cache = {
+          entries: [],
+          byCorpCode: new Map(),
+          byStockCode: new Map(),
+          updatedAt: 0,
+          xmlPreview: `ZIP contains no XML. Files: ${fileNames.join(", ")}`,
+        };
+        return cache;
+      }
+
       const rawBytes = unzipped[xmlFileName];
 
-      // Detect encoding from XML declaration (OpenDART may use EUC-KR)
+      // Detect encoding from XML declaration
       const asciiPreview = new TextDecoder("ascii").decode(rawBytes.slice(0, 200));
       const encMatch = asciiPreview.match(/encoding=["']([^"']+)["']/i);
       const detectedEnc = encMatch?.[1].toLowerCase() ?? "";
@@ -55,6 +102,8 @@ export async function loadCorpCodes(apiKey?: string): Promise<CorpCodeCache> {
         detectedEnc === "euc-kr" || detectedEnc === "cp949" ? "euc-kr" : "utf-8"
       );
       const xml = decoder.decode(rawBytes);
+
+      const xmlPreview = `[enc=${detectedEnc || "utf-8"}, file=${xmlFileName}, bytes=${rawBytes.length}] ${xml.slice(0, 500)}`;
 
       const entries = parseCorpCodeXml(xml);
       const byCorpCode = new Map<string, CorpCodeEntry>();
@@ -67,7 +116,17 @@ export async function loadCorpCodes(apiKey?: string): Promise<CorpCodeCache> {
         }
       }
 
-      cache = { entries, byCorpCode, byStockCode, updatedAt: Date.now() };
+      cache = { entries, byCorpCode, byStockCode, updatedAt: Date.now(), xmlPreview };
+      return cache;
+    } catch (err) {
+      // On error, set cache with error info but allow retry (updatedAt = 0)
+      cache = {
+        entries: [],
+        byCorpCode: new Map(),
+        byStockCode: new Map(),
+        updatedAt: 0,
+        xmlPreview: `Load error: ${err instanceof Error ? err.message : String(err)}`,
+      };
       return cache;
     } finally {
       loadingPromise = null;
@@ -115,7 +174,6 @@ export async function searchCompanies(
     }
   }
 
-  // Prioritize listed companies (with stock_code)
   const sorted = [...exactMatches, ...prefixMatches, ...containsMatches].sort((a, b) => {
     const aListed = a.stock_code ? 0 : 1;
     const bListed = b.stock_code ? 0 : 1;
@@ -138,11 +196,13 @@ export function getCacheDiagnostics(): {
   loaded: boolean;
   entryCount: number;
   sampleNames: string[];
+  xmlPreview: string;
 } {
-  if (!cache) return { loaded: false, entryCount: 0, sampleNames: [] };
+  if (!cache) return { loaded: false, entryCount: 0, sampleNames: [], xmlPreview: "not loaded" };
   return {
     loaded: true,
     entryCount: cache.entries.length,
     sampleNames: cache.entries.slice(0, 5).map((e) => e.corp_name),
+    xmlPreview: cache.xmlPreview,
   };
 }

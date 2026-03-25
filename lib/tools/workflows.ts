@@ -35,7 +35,7 @@ Args:
         if (results.length === 0) {
           const diag = getCacheDiagnostics();
           const diagInfo = diag.loaded
-            ? `\n\n[Debug] Cache loaded: ${diag.entryCount} entries. Sample names: ${diag.sampleNames.join(", ")}`
+            ? `\n\n[Debug] Cache: ${diag.entryCount} entries. Samples: ${diag.sampleNames.join(", ")}\n[XML] ${diag.xmlPreview}`
             : "\n\n[Debug] Cache not loaded.";
           return { content: [{ type: "text" as const, text: `No companies found for "${params.query}". / "${params.query}"에 대한 검색 결과가 없습니다.${diagInfo}` }] };
         }
