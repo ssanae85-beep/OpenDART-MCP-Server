@@ -29,6 +29,34 @@ export class OpenDartError extends Error {
   }
 }
 
+export class OpenDartNetworkError extends Error {
+  constructor(
+    public type: "timeout" | "network" | "http",
+    public endpoint: string,
+    public attempt: number,
+    public maxAttempts: number,
+    public httpStatus?: number,
+  ) {
+    const messages: Record<string, { ko: string; en: string }> = {
+      timeout: {
+        ko: `요청 시간 초과 (${attempt}/${maxAttempts}회 시도). OpenDART 서버 응답이 느립니다. 잠시 후 다시 시도해주세요.`,
+        en: `Request timeout (attempt ${attempt}/${maxAttempts}). OpenDART server is slow. Please try again shortly.`,
+      },
+      network: {
+        ko: `네트워크 연결 실패 (${attempt}/${maxAttempts}회 시도). OpenDART 서버에 연결할 수 없습니다.`,
+        en: `Network connection failed (attempt ${attempt}/${maxAttempts}). Cannot reach OpenDART server.`,
+      },
+      http: {
+        ko: `HTTP ${httpStatus || ""} 서버 오류 (${attempt}/${maxAttempts}회 시도).`,
+        en: `HTTP ${httpStatus || ""} server error (attempt ${attempt}/${maxAttempts}).`,
+      },
+    };
+    const msg = messages[type];
+    super(`[OpenDART] ${msg.en} / ${msg.ko} (endpoint: ${endpoint})`);
+    this.name = "OpenDartNetworkError";
+  }
+}
+
 export function isNoData(status: string): boolean {
   return status === "013";
 }
@@ -39,6 +67,15 @@ export function checkResponse(data: { status: string; message: string }, endpoin
 }
 
 export function formatApiError(error: unknown): string {
+  if (error instanceof OpenDartNetworkError) {
+    if (error.type === "timeout") {
+      return `${error.message}\n\n💡 OpenDART API 서버가 일시적으로 느린 상태입니다. 잠시 후 다시 시도해주세요.`;
+    }
+    if (error.type === "network") {
+      return `${error.message}\n\n💡 인터넷 연결 또는 OpenDART 서버 상태를 확인해주세요. (https://opendart.fss.or.kr)`;
+    }
+    return error.message;
+  }
   if (error instanceof OpenDartError) {
     return error.message;
   }

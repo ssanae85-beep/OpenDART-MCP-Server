@@ -3,7 +3,7 @@ import { z } from "zod";
 import { getJson, resolveApiKey } from "@/lib/opendart/client";
 import { formatApiError, isNoData } from "@/lib/opendart/errors";
 import { searchCompanies } from "@/lib/opendart/cache";
-import { formatCompanyInfoMd, formatNumber, formatCorpCls } from "@/lib/opendart/formatters";
+import { formatCompanyInfoMd, formatAmount, formatCorpCls, getAmountUnitLabel, type AmountUnit } from "@/lib/opendart/formatters";
 
 export function registerWorkflowTools(server: McpServer) {
   // Search company by name
@@ -78,6 +78,9 @@ Args:
         bsns_year: z.string().regex(/^\d{4}$/).describe("Business year"),
         reprt_code: z.enum(["11011", "11012", "11013", "11014"]).default("11011"),
         fs_div: z.enum(["OFS", "CFS"]).default("CFS"),
+        amount_unit: z.enum(["auto", "won", "eok", "jo"]).default("auto").describe(
+          "금액 표시 단위. auto=자동(조/억/만), won=원, eok=억원, jo=조원"
+        ),
         api_key: z.string().optional(),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
@@ -85,6 +88,7 @@ Args:
     async (params) => {
       try {
         const key = resolveApiKey(params.api_key);
+        const unit = (params.amount_unit || "auto") as AmountUnit;
 
         // Fetch company info and financial data in parallel
         const [companyData, accountsData, indexData] = await Promise.all([
@@ -110,21 +114,33 @@ Args:
           sections.push(formatCompanyInfoMd(companyData));
         }
 
-        // Key accounts section
+        // Key accounts section — CFS/OFS 분리 출력
         if (accountsData && !isNoData(accountsData.status as string)) {
           const items = (accountsData.list || []) as Array<Record<string, unknown>>;
           if (items.length > 0) {
-            const first = items[0];
-            sections.push("");
-            sections.push(`### 주요 재무정보 (Key Financials) - ${params.bsns_year}`);
-            sections.push("");
-            sections.push(`| 재무제표 | 계정명 | 당기 (${first.thstrm_nm}) | 전기 (${first.frmtrm_nm}) | 전전기 (${first.bfefrmtrm_nm}) |`);
-            sections.push("|----------|--------|------|------|--------|");
+            const cfs = items.filter(i => i.fs_div === "CFS");
+            const ofs = items.filter(i => i.fs_div === "OFS");
 
-            for (const item of items) {
-              sections.push(
-                `| ${item.sj_nm} | ${item.account_nm} | ${formatNumber(item.thstrm_amount as string)} | ${formatNumber(item.frmtrm_amount as string)} | ${formatNumber(item.bfefrmtrm_amount as string)} |`
-              );
+            const renderAccountsTable = (rows: Array<Record<string, unknown>>, label: string) => {
+              const first = rows[0];
+              sections.push("");
+              sections.push(`### ${label} - ${params.bsns_year}`);
+              sections.push("");
+              sections.push(`| 재무제표 | 계정명 | 당기 (${first.thstrm_nm}) | 전기 (${first.frmtrm_nm}) | 전전기 (${first.bfefrmtrm_nm}) |`);
+              sections.push("|----------|--------|------|------|--------|");
+              for (const item of rows) {
+                sections.push(
+                  `| ${item.sj_nm} | ${item.account_nm} | ${formatAmount(item.thstrm_amount as string, unit)} | ${formatAmount(item.frmtrm_amount as string, unit)} | ${formatAmount(item.bfefrmtrm_amount as string, unit)} |`
+                );
+              }
+              sections.push("", `> 금액 단위: ${getAmountUnitLabel(unit)}`);
+            };
+
+            if (cfs.length > 0 && ofs.length > 0) {
+              renderAccountsTable(cfs, "연결재무제표 (Consolidated)");
+              renderAccountsTable(ofs, "별도재무제표 (Separate)");
+            } else {
+              renderAccountsTable(items, "주요 재무정보 (Key Financials)");
             }
           }
         }
@@ -174,6 +190,9 @@ Args:
         bsns_year: z.string().regex(/^\d{4}$/),
         reprt_code: z.enum(["11011", "11012", "11013", "11014"]).default("11011"),
         fs_div: z.enum(["OFS", "CFS"]).default("CFS"),
+        amount_unit: z.enum(["auto", "won", "eok", "jo"]).default("auto").describe(
+          "금액 표시 단위. auto=자동(조/억/만), won=원, eok=억원, jo=조원"
+        ),
         api_key: z.string().optional(),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
@@ -181,6 +200,7 @@ Args:
     async (params) => {
       try {
         const key = resolveApiKey(params.api_key);
+        const unit = (params.amount_unit || "auto") as AmountUnit;
 
         const [accountsData, indexData] = await Promise.all([
           getJson("fnlttMultiAcnt", {
@@ -223,10 +243,12 @@ Args:
           for (const acct of accountNames) {
             const values = companies.map((co) => {
               const entry = byCompany.get(co)?.find((i) => i.account_nm === acct);
-              return entry ? formatNumber(entry.thstrm_amount as string) : "-";
+              return entry ? formatAmount(entry.thstrm_amount as string, unit) : "-";
             });
             sections.push(`| ${acct} | ${values.join(" | ")} |`);
           }
+
+          sections.push("", `> 금액 단위: ${getAmountUnitLabel(unit)}`);
         }
 
         if (indexData && !isNoData(indexData.status as string)) {

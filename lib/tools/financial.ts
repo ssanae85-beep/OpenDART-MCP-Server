@@ -2,7 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { getJson, resolveApiKey } from "@/lib/opendart/client";
 import { formatApiError, isNoData } from "@/lib/opendart/errors";
-import { formatFinancialTableMd, formatGenericTableMd } from "@/lib/opendart/formatters";
+import { formatFinancialTableMd, formatGenericTableMd, type AmountUnit } from "@/lib/opendart/formatters";
 
 const reprtCodeSchema = z.enum(["11011", "11012", "11013", "11014"]).describe(
   "Report type: 11011=Annual, 11012=Semi-annual, 11013=Q1, 11014=Q3"
@@ -10,6 +10,10 @@ const reprtCodeSchema = z.enum(["11011", "11012", "11013", "11014"]).describe(
 
 const fsDiv = z.enum(["OFS", "CFS"]).default("CFS").describe(
   "Financial statement type: OFS=Individual, CFS=Consolidated (default)"
+);
+
+const amountUnitSchema = z.enum(["auto", "won", "eok", "jo"]).default("auto").describe(
+  "금액 표시 단위. auto=자동(조/억/만), won=원, eok=억원, jo=조원"
 );
 
 function registerFinancialTool(
@@ -74,8 +78,12 @@ Args:
   - reprt_code: Report type (11011=Annual, 11012=Semi-annual, 11013=Q1, 11014=Q3)
   - fs_div: OFS=Individual, CFS=Consolidated (default: CFS)`,
     "fnlttSinglAcnt",
-    { fs_div: fsDiv },
-    (data) => formatFinancialTableMd(data.list as Array<Record<string, unknown>>, "단일회사 주요계정 (Key Accounts)")
+    { fs_div: fsDiv, amount_unit: amountUnitSchema },
+    (data, params) => formatFinancialTableMd(
+      data.list as Array<Record<string, unknown>>,
+      "단일회사 주요계정 (Key Accounts)",
+      { groupByFsDiv: true, amountUnit: (params.amount_unit as AmountUnit) || "auto" }
+    )
   );
 
   // Multi company key accounts
@@ -95,6 +103,7 @@ Args:
         bsns_year: z.string().regex(/^\d{4}$/),
         reprt_code: reprtCodeSchema,
         fs_div: fsDiv,
+        amount_unit: amountUnitSchema,
         api_key: z.string().optional(),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
@@ -114,13 +123,10 @@ Args:
         }
 
         const items = data.list as Array<Record<string, unknown>>;
-        const md = formatGenericTableMd(items, "다중회사 주요계정 (Multi-Company Accounts)", [
-          { key: "corp_name", label: "회사명" },
-          { key: "sj_nm", label: "재무제표" },
-          { key: "account_nm", label: "계정명" },
-          { key: "thstrm_amount", label: "당기" },
-          { key: "frmtrm_amount", label: "전기" },
-        ]);
+        const md = formatFinancialTableMd(items, "다중회사 주요계정 (Multi-Company Accounts)", {
+          groupByFsDiv: true,
+          amountUnit: (params.amount_unit as AmountUnit) || "auto",
+        });
         return { content: [{ type: "text" as const, text: md }] };
       } catch (err) {
         return { content: [{ type: "text" as const, text: formatApiError(err) }], isError: true };
@@ -139,8 +145,12 @@ Returns comprehensive BS, IS, CF data. May return many rows.
 Args:
   - corp_code, bsns_year, reprt_code, fs_div`,
     "fnlttSinglAcntAll",
-    { fs_div: fsDiv },
-    (data) => formatFinancialTableMd(data.list as Array<Record<string, unknown>>, "전체 재무제표 (Full Statement)")
+    { fs_div: fsDiv, amount_unit: amountUnitSchema },
+    (data, params) => formatFinancialTableMd(
+      data.list as Array<Record<string, unknown>>,
+      "전체 재무제표 (Full Statement)",
+      { groupByFsDiv: true, amountUnit: (params.amount_unit as AmountUnit) || "auto" }
+    )
   );
 
   // Single company financial index

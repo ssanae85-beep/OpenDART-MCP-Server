@@ -1,8 +1,11 @@
-import { checkResponse } from "./errors";
+import { checkResponse, OpenDartNetworkError } from "./errors";
 
 const BASE_URL = "https://opendart.fss.or.kr/api";
-const MAX_RETRIES = 2;
-const RETRY_DELAYS = [1000, 3000];
+const DEFAULT_TIMEOUT = 30000;
+const BINARY_TIMEOUT = 55000;
+const DEFAULT_RETRIES = 2;
+const BINARY_RETRIES = 3;
+const RETRY_DELAYS = [1000, 2000, 4000];
 
 let sessionApiKey: string | undefined;
 
@@ -25,15 +28,24 @@ export function resolveApiKey(toolParamKey?: string): string {
   return key;
 }
 
+interface FetchOptions {
+  timeout?: number;
+  retries?: number;
+  endpoint?: string;
+}
+
 async function fetchWithRetry(
   url: string,
-  retries: number = MAX_RETRIES
+  options: FetchOptions = {}
 ): Promise<Response> {
+  const { timeout = DEFAULT_TIMEOUT, retries = DEFAULT_RETRIES, endpoint = "unknown" } = options;
   let lastError: Error | null = null;
+
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      const response = await fetch(url, { signal: AbortSignal.timeout(30000) });
+      const response = await fetch(url, { signal: AbortSignal.timeout(timeout) });
       if (response.status === 429 || response.status >= 500) {
+        lastError = new OpenDartNetworkError("http", endpoint, attempt + 1, retries + 1, response.status);
         if (attempt < retries) {
           await new Promise((r) => setTimeout(r, RETRY_DELAYS[attempt]));
           continue;
@@ -41,7 +53,13 @@ async function fetchWithRetry(
       }
       return response;
     } catch (err) {
-      lastError = err instanceof Error ? err : new Error(String(err));
+      if (err instanceof DOMException && err.name === "AbortError") {
+        lastError = new OpenDartNetworkError("timeout", endpoint, attempt + 1, retries + 1);
+      } else if (err instanceof TypeError) {
+        lastError = new OpenDartNetworkError("network", endpoint, attempt + 1, retries + 1);
+      } else {
+        lastError = err instanceof Error ? err : new Error(String(err));
+      }
       if (attempt < retries) {
         await new Promise((r) => setTimeout(r, RETRY_DELAYS[attempt]));
       }
@@ -61,9 +79,13 @@ export async function getJson(
     if (v) url.searchParams.set(k, v);
   }
 
-  const response = await fetchWithRetry(url.toString());
+  const response = await fetchWithRetry(url.toString(), {
+    timeout: DEFAULT_TIMEOUT,
+    retries: DEFAULT_RETRIES,
+    endpoint,
+  });
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status} from OpenDART API (${endpoint})`);
+    throw new OpenDartNetworkError("http", endpoint, 1, 1, response.status);
   }
 
   const data = await response.json() as { status: string; message: string; [key: string]: unknown };
@@ -82,9 +104,13 @@ export async function getBinary(
     if (v) url.searchParams.set(k, v);
   }
 
-  const response = await fetchWithRetry(url.toString());
+  const response = await fetchWithRetry(url.toString(), {
+    timeout: BINARY_TIMEOUT,
+    retries: BINARY_RETRIES,
+    endpoint,
+  });
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status} from OpenDART API (${endpoint})`);
+    throw new OpenDartNetworkError("http", endpoint, 1, 1, response.status);
   }
 
   return response.arrayBuffer();

@@ -10,6 +10,7 @@ interface CorpCodeCache {
 }
 
 let cache: CorpCodeCache | null = null;
+let loadingPromise: Promise<CorpCodeCache> | null = null;
 const TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 function parseCorpCodeXml(xml: string): CorpCodeEntry[] {
@@ -33,28 +34,39 @@ export async function loadCorpCodes(apiKey?: string): Promise<CorpCodeCache> {
     return cache;
   }
 
-  const key = resolveApiKey(apiKey);
-  const buffer = await getBinary("corpCode", {}, key);
-  const uint8 = new Uint8Array(buffer);
+  // 이미 로딩 중이면 같은 Promise 반환 (중복 다운로드 방지)
+  if (loadingPromise) return loadingPromise;
 
-  const unzipped = unzipSync(uint8);
-  const xmlFileName = Object.keys(unzipped)[0];
-  const decoder = new TextDecoder("utf-8");
-  const xml = decoder.decode(unzipped[xmlFileName]);
+  loadingPromise = (async () => {
+    try {
+      const key = resolveApiKey(apiKey);
+      const buffer = await getBinary("corpCode", {}, key);
+      const uint8 = new Uint8Array(buffer);
 
-  const entries = parseCorpCodeXml(xml);
-  const byCorpCode = new Map<string, CorpCodeEntry>();
-  const byStockCode = new Map<string, CorpCodeEntry>();
+      const unzipped = unzipSync(uint8);
+      const xmlFileName = Object.keys(unzipped)[0];
+      const decoder = new TextDecoder("utf-8");
+      const xml = decoder.decode(unzipped[xmlFileName]);
 
-  for (const entry of entries) {
-    byCorpCode.set(entry.corp_code, entry);
-    if (entry.stock_code) {
-      byStockCode.set(entry.stock_code, entry);
+      const entries = parseCorpCodeXml(xml);
+      const byCorpCode = new Map<string, CorpCodeEntry>();
+      const byStockCode = new Map<string, CorpCodeEntry>();
+
+      for (const entry of entries) {
+        byCorpCode.set(entry.corp_code, entry);
+        if (entry.stock_code) {
+          byStockCode.set(entry.stock_code, entry);
+        }
+      }
+
+      cache = { entries, byCorpCode, byStockCode, updatedAt: Date.now() };
+      return cache;
+    } finally {
+      loadingPromise = null;
     }
-  }
+  })();
 
-  cache = { entries, byCorpCode, byStockCode, updatedAt: Date.now() };
-  return cache;
+  return loadingPromise;
 }
 
 export async function searchCompanies(
