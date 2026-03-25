@@ -45,8 +45,16 @@ export async function loadCorpCodes(apiKey?: string): Promise<CorpCodeCache> {
 
       const unzipped = unzipSync(uint8);
       const xmlFileName = Object.keys(unzipped)[0];
-      const decoder = new TextDecoder("utf-8");
-      const xml = decoder.decode(unzipped[xmlFileName]);
+      const rawBytes = unzipped[xmlFileName];
+
+      // Detect encoding from XML declaration (OpenDART may use EUC-KR)
+      const asciiPreview = new TextDecoder("ascii").decode(rawBytes.slice(0, 200));
+      const encMatch = asciiPreview.match(/encoding=["']([^"']+)["']/i);
+      const detectedEnc = encMatch?.[1].toLowerCase() ?? "";
+      const decoder = new TextDecoder(
+        detectedEnc === "euc-kr" || detectedEnc === "cp949" ? "euc-kr" : "utf-8"
+      );
+      const xml = decoder.decode(rawBytes);
 
       const entries = parseCorpCodeXml(xml);
       const byCorpCode = new Map<string, CorpCodeEntry>();
@@ -123,4 +131,18 @@ export async function getCorpCodeByName(
 ): Promise<CorpCodeEntry | null> {
   const results = await searchCompanies(name, apiKey, 1);
   return results[0] || null;
+}
+
+/** Returns cache diagnostic info for debugging search failures */
+export function getCacheDiagnostics(): {
+  loaded: boolean;
+  entryCount: number;
+  sampleNames: string[];
+} {
+  if (!cache) return { loaded: false, entryCount: 0, sampleNames: [] };
+  return {
+    loaded: true,
+    entryCount: cache.entries.length,
+    sampleNames: cache.entries.slice(0, 5).map((e) => e.corp_name),
+  };
 }

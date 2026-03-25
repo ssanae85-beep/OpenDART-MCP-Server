@@ -6,6 +6,7 @@ import { registerFinancialTools } from "./financial";
 import { registerDisclosureTools } from "./disclosure";
 import { registerShareholdingTools } from "./shareholding";
 import { registerMajorEventTools } from "./major-events";
+import { registerSecuritiesRegTools } from "./securities-reg";
 import { registerWorkflowTools } from "./workflows";
 
 function registerConfigTools(server: McpServer) {
@@ -60,4 +61,5 @@ export function registerAllTools(server: McpServer) {
   registerDisclosureTools(server);     // Periodic report details
   registerShareholdingTools(server);   // Shareholding disclosures
   registerMajorEventTools(server);     // Major corporate events
+  registerSecuritiesRegTools(server);  // Securities registration statements
 }

@@ -2,7 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { getJson, resolveApiKey } from "@/lib/opendart/client";
 import { formatApiError, isNoData } from "@/lib/opendart/errors";
-import { formatFinancialTableMd, formatGenericTableMd, type AmountUnit } from "@/lib/opendart/formatters";
+import { formatFinancialTableMd, formatGenericTableMd } from "@/lib/opendart/formatters";
 
 const reprtCodeSchema = z.enum(["11011", "11012", "11013", "11014"]).describe(
   "Report type: 11011=Annual, 11012=Semi-annual, 11013=Q1, 11014=Q3"
@@ -12,10 +12,6 @@ const fsDiv = z.enum(["OFS", "CFS"]).default("CFS").describe(
   "Financial statement type: OFS=Individual, CFS=Consolidated (default)"
 );
 
-const amountUnitSchema = z.enum(["auto", "won", "eok", "jo"]).default("auto").describe(
-  "금액 표시 단위. auto=자동(조/억/만), won=원, eok=억원, jo=조원"
-);
-
 function registerFinancialTool(
   server: McpServer,
   name: string,
@@ -23,7 +19,7 @@ function registerFinancialTool(
   description: string,
   endpoint: string,
   extraSchema: Record<string, z.ZodTypeAny>,
-  formatFn: (data: Record<string, unknown>, params: Record<string, unknown>) => string
+  formatFn: (data: Record<string, unknown>) => string
 ) {
   server.registerTool(
     name,
@@ -48,13 +44,14 @@ function registerFinancialTool(
           reprt_code: params.reprt_code as string,
         };
         if (params.fs_div) queryParams.fs_div = params.fs_div as string;
+        if (params.idx_cl_code) queryParams.idx_cl_code = params.idx_cl_code as string;
 
         const data = await getJson(endpoint, queryParams, key);
         if (isNoData(data.status as string)) {
           return { content: [{ type: "text" as const, text: `No data found. / 조회된 데이터가 없습니다. (${endpoint})` }] };
         }
 
-        const md = formatFn(data, params);
+        const md = formatFn(data);
         return { content: [{ type: "text" as const, text: md }] };
       } catch (err) {
         return { content: [{ type: "text" as const, text: formatApiError(err) }], isError: true };
@@ -78,11 +75,11 @@ Args:
   - reprt_code: Report type (11011=Annual, 11012=Semi-annual, 11013=Q1, 11014=Q3)
   - fs_div: OFS=Individual, CFS=Consolidated (default: CFS)`,
     "fnlttSinglAcnt",
-    { fs_div: fsDiv, amount_unit: amountUnitSchema },
-    (data, params) => formatFinancialTableMd(
+    { fs_div: fsDiv },
+    (data) => formatFinancialTableMd(
       data.list as Array<Record<string, unknown>>,
       "단일회사 주요계정 (Key Accounts)",
-      { groupByFsDiv: true, amountUnit: (params.amount_unit as AmountUnit) || "auto" }
+      { groupByFsDiv: true }
     )
   );
 
@@ -103,7 +100,6 @@ Args:
         bsns_year: z.string().regex(/^\d{4}$/),
         reprt_code: reprtCodeSchema,
         fs_div: fsDiv,
-        amount_unit: amountUnitSchema,
         api_key: z.string().optional(),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
@@ -125,7 +121,6 @@ Args:
         const items = data.list as Array<Record<string, unknown>>;
         const md = formatFinancialTableMd(items, "다중회사 주요계정 (Multi-Company Accounts)", {
           groupByFsDiv: true,
-          amountUnit: (params.amount_unit as AmountUnit) || "auto",
         });
         return { content: [{ type: "text" as const, text: md }] };
       } catch (err) {
@@ -145,11 +140,11 @@ Returns comprehensive BS, IS, CF data. May return many rows.
 Args:
   - corp_code, bsns_year, reprt_code, fs_div`,
     "fnlttSinglAcntAll",
-    { fs_div: fsDiv, amount_unit: amountUnitSchema },
-    (data, params) => formatFinancialTableMd(
+    { fs_div: fsDiv },
+    (data) => formatFinancialTableMd(
       data.list as Array<Record<string, unknown>>,
       "전체 재무제표 (Full Statement)",
-      { groupByFsDiv: true, amountUnit: (params.amount_unit as AmountUnit) || "auto" }
+      { groupByFsDiv: true }
     )
   );
 
@@ -162,9 +157,12 @@ Args:
 Returns profitability, stability, growth, and activity ratios.
 
 Args:
-  - corp_code, bsns_year, reprt_code, fs_div`,
+  - corp_code, bsns_year, reprt_code, idx_cl_code (optional)`,
     "fnlttSinglIndx",
-    { fs_div: fsDiv },
+    {
+      fs_div: fsDiv,
+      idx_cl_code: z.string().optional().describe("Index class code (optional filter)"),
+    },
     (data) => {
       const items = data.list as Array<Record<string, unknown>>;
       return formatGenericTableMd(items, "주요 재무지표 (Financial Indicators)", [
@@ -191,6 +189,7 @@ Args:
         bsns_year: z.string().regex(/^\d{4}$/),
         reprt_code: reprtCodeSchema,
         fs_div: fsDiv,
+        idx_cl_code: z.string().optional().describe("Index class code (optional filter)"),
         api_key: z.string().optional(),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
@@ -198,12 +197,15 @@ Args:
     async (params) => {
       try {
         const key = resolveApiKey(params.api_key);
-        const data = await getJson("fnlttCmpnyIndx", {
+        const queryParams: Record<string, string> = {
           corp_code: params.corp_code,
           bsns_year: params.bsns_year,
           reprt_code: params.reprt_code,
           fs_div: params.fs_div,
-        }, key);
+        };
+        if (params.idx_cl_code) queryParams.idx_cl_code = params.idx_cl_code;
+
+        const data = await getJson("fnlttCmpnyIndx", queryParams, key);
 
         if (isNoData(data.status as string)) {
           return { content: [{ type: "text" as const, text: "No data found." }] };
