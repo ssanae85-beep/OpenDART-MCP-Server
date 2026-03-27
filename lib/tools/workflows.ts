@@ -1,28 +1,28 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { formatApiError } from "@/lib/opendart/errors";
-import { searchCompanies, getCacheDiagnostics } from "@/lib/opendart/cache";
+import { searchCompanies } from "@/lib/opendart/cache";
 
 export function registerWorkflowTools(server: McpServer) {
-  // Search company by name
   server.registerTool(
     "opendart_search_company",
     {
       title: "회사 검색 (Search Company)",
-      description: `Search for companies by Korean/English name or stock code.
-Returns matching companies with their corp_code (needed for other tools), stock_code, and listing status.
-This is the recommended first step - find the corp_code, then use it with other tools.
+      description: `Search for companies by Korean/English name, stock code, or corp code.
+Supports fuzzy matching: chosung search (ㅎㄷㅈㄷㅊ→현대자동차), abbreviations (삼전→삼성전자), and typo tolerance.
+Returns matching companies with their corp_code (needed for other tools).
 
 Examples:
   - query="삼성전자" → finds Samsung Electronics
   - query="005930" → finds by stock code
-  - query="카카오" → finds Kakao and related companies
+  - query="삼전" → finds Samsung Electronics (abbreviation)
+  - query="ㅎㄷㅈㄷㅊ" → finds Hyundai Motor (chosung)
 
 Args:
-  - query: Company name (Korean/English) or 6-digit stock code
+  - query: Company name, stock code, or corp code
   - limit: Max results (default: 10)`,
       inputSchema: {
-        query: z.string().min(1).describe("Company name or stock code to search"),
+        query: z.string().min(1).describe("Company name, stock code, or corp code"),
         limit: z.number().int().min(1).max(30).default(10).describe("Max results"),
         api_key: z.string().optional().describe("Optional: your own API key"),
       },
@@ -33,11 +33,7 @@ Args:
         const results = await searchCompanies(params.query, params.api_key, params.limit);
 
         if (results.length === 0) {
-          const diag = getCacheDiagnostics();
-          const diagInfo = diag.loaded
-            ? `\n\n[Debug] Cache: ${diag.entryCount} entries. Samples: ${diag.sampleNames.join(", ")}\n[XML] ${diag.xmlPreview}`
-            : "\n\n[Debug] Cache not loaded.";
-          return { content: [{ type: "text" as const, text: `No companies found for "${params.query}". / "${params.query}"에 대한 검색 결과가 없습니다.${diagInfo}` }] };
+          return { content: [{ type: "text" as const, text: `No companies found for "${params.query}". / "${params.query}"에 대한 검색 결과가 없습니다.\n\nTips: 정확한 회사명, 종목코드(6자리), 또는 기업코드(8자리)를 입력하세요.` }] };
         }
 
         const lines = [

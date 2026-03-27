@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "update-corp-codes": "tsx scripts/update-corp-codes.ts"
   },
   "dependencies": {
     "fflate": "^0.8.2",
@@ -19,6 +20,8 @@
     "@types/node": "^25.5.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "fast-xml-parser": "^5.5.9",
+    "tsx": "^4.21.0",
     "typescript": "^6.0.2"
   }
 }
