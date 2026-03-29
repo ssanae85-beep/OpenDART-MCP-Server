@@ -28,7 +28,9 @@ function registerFinancialTool(
       description,
       inputSchema: {
         corp_code: z.string().length(8).describe("8-digit company code"),
-        bsns_year: z.string().regex(/^\d{4}$/).describe("Business year (YYYY)"),
+        bsns_year: z.string().regex(/^\d{4}$/).describe(
+          "Fiscal year the report COVERS (YYYY). '2025년 사업보고서' → bsns_year='2025'. Do NOT subtract 1 from the year the user mentions."
+        ),
         reprt_code: reprtCodeSchema,
         ...extraSchema,
         api_key: z.string().optional().describe("Optional: your own OpenDART API key"),
@@ -97,7 +99,9 @@ Args:
   - fs_div: OFS or CFS`,
       inputSchema: {
         corp_code: z.string().describe("Comma-separated 8-digit codes (max 100)"),
-        bsns_year: z.string().regex(/^\d{4}$/),
+        bsns_year: z.string().regex(/^\d{4}$/).describe(
+          "Fiscal year the report COVERS (YYYY). '2025년 사업보고서' → bsns_year='2025'. Do NOT subtract 1."
+        ),
         reprt_code: reprtCodeSchema,
         fs_div: fsDiv,
         api_key: z.string().optional(),
@@ -186,7 +190,9 @@ Args:
   - bsns_year, reprt_code, fs_div`,
       inputSchema: {
         corp_code: z.string().describe("Comma-separated 8-digit codes"),
-        bsns_year: z.string().regex(/^\d{4}$/),
+        bsns_year: z.string().regex(/^\d{4}$/).describe(
+          "Fiscal year the report COVERS (YYYY). '2025년 사업보고서' → bsns_year='2025'. Do NOT subtract 1."
+        ),
         reprt_code: reprtCodeSchema,
         fs_div: fsDiv,
         idx_cl_code: z.string().optional().describe("Index class code (optional filter)"),

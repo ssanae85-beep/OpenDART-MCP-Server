@@ -6,7 +6,9 @@ import { formatGenericTableMd } from "@/lib/opendart/formatters";
 
 const periodicParams = {
   corp_code: z.string().length(8).describe("8-digit company code"),
-  bsns_year: z.string().regex(/^\d{4}$/).describe("Business year (YYYY)"),
+  bsns_year: z.string().regex(/^\d{4}$/).describe(
+    "Fiscal year the report COVERS (YYYY). '2025년 사업보고서' → bsns_year='2025'. Do NOT subtract 1 from the year the user mentions."
+  ),
   reprt_code: z.enum(["11011", "11012", "11013", "11014"]).describe(
     "11011=Annual, 11012=Semi-annual, 11013=Q1, 11014=Q3"
   ),
