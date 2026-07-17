@@ -11,7 +11,28 @@ API를 발급받아 Claude 커스텀 커넥터로 바로 연결할 수 있습니
 - **Vercel 배포**: ngrok/터널링 없이 커스텀 커넥터로 바로 연결 가능합니다.
 - **URL 기반 API 키**: 커넥터 URL에 키를 포함하여 설정 없이 즉시 사용 가능합니다.
 - **마크다운 출력**: Claude에서 깔끔하게 렌더링되는 테이블 형태로 출력합니다.
-- **Corp Code 캐싱**: 9만+ 기업 목록을 인메모리 캐싱 (24시간 TTL)
+- **Corp Code 캐싱**: 11만+ 기업 목록을 인메모리 캐싱
+
+## 기업 목록 갱신
+
+회사 검색은 `data/corp-codes.json`(11만+ 기업의 이름 ↔ 고유번호 대조표)을 읽습니다.
+스냅샷이라 **갱신하지 않으면 신규 상장사를 찾지 못합니다.**
+
+매주 월요일 06:00(KST)에 GitHub Actions가 자동으로 갱신합니다
+([`.github/workflows/update-corp-codes.yml`](.github/workflows/update-corp-codes.yml)).
+Actions 탭에서 수동 실행(`Run workflow`)도 가능합니다.
+
+**설정**: 저장소 `Settings → Secrets and variables → Actions`에
+`OPENDART_API_KEY` 시크릿을 등록해야 합니다.
+
+로컬에서 갱신하려면:
+
+```bash
+OPENDART_API_KEY=your_key npm run update-corp-codes   # 또는 .env에 키 저장
+```
+
+스크립트는 **쓰기 전에 검증**합니다. 기업 수가 비정상적으로 적거나, 이전보다 10% 이상 줄었거나,
+종목코드 형식이 깨졌으면(예: 앞자리 0 탈락) 파일을 건드리지 않고 실패합니다.
 
 ## Quick Start
 
