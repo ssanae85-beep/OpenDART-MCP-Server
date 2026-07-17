@@ -44,7 +44,11 @@ jobs:
       # The script validates before writing: it rejects a short list, a large
       # shrink, or codes that lost their leading zeros, and exits non-zero
       # without touching the file. A failure here means nothing was committed.
+      #
+      # The download retries with backoff (DART is slow to reach from a runner
+      # outside Korea), so allow for that without letting a hang run for hours.
       - name: Rebuild corp-codes.json
+        timeout-minutes: 20
         env:
           OPENDART_API_KEY: ${{ secrets.OPENDART_API_KEY }}
         run: npm run update-corp-codes

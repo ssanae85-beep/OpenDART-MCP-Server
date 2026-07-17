@@ -32,14 +32,23 @@ interface FetchOptions {
   timeout?: number;
   retries?: number;
   endpoint?: string;
+  /** Called before each backoff. Retries are otherwise silent, which makes an
+   *  unattended run that dies after several attempts impossible to diagnose. */
+  onRetry?: (info: { attempt: number; maxAttempts: number; delayMs: number; error: Error }) => void;
 }
 
 async function fetchWithRetry(
   url: string,
   options: FetchOptions = {}
 ): Promise<Response> {
-  const { timeout = DEFAULT_TIMEOUT, retries = DEFAULT_RETRIES, endpoint = "unknown" } = options;
+  const { timeout = DEFAULT_TIMEOUT, retries = DEFAULT_RETRIES, endpoint = "unknown", onRetry } = options;
   let lastError: Error | null = null;
+
+  const backoff = async (attempt: number, error: Error) => {
+    const delayMs = RETRY_DELAYS[Math.min(attempt, RETRY_DELAYS.length - 1)];
+    onRetry?.({ attempt: attempt + 1, maxAttempts: retries + 1, delayMs, error });
+    await new Promise((r) => setTimeout(r, delayMs));
+  };
 
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
@@ -47,13 +56,16 @@ async function fetchWithRetry(
       if (response.status === 429 || response.status >= 500) {
         lastError = new OpenDartNetworkError("http", endpoint, attempt + 1, retries + 1, response.status);
         if (attempt < retries) {
-          await new Promise((r) => setTimeout(r, RETRY_DELAYS[attempt]));
+          await backoff(attempt, lastError);
           continue;
         }
       }
       return response;
     } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") {
+      // AbortSignal.timeout() raises TimeoutError, not AbortError. Matching only
+      // AbortError left every timeout falling through as a bare DOMException,
+      // losing the retry hint the message is supposed to carry.
+      if (err instanceof DOMException && (err.name === "TimeoutError" || err.name === "AbortError")) {
         lastError = new OpenDartNetworkError("timeout", endpoint, attempt + 1, retries + 1);
       } else if (err instanceof TypeError) {
         lastError = new OpenDartNetworkError("network", endpoint, attempt + 1, retries + 1);
@@ -61,7 +73,7 @@ async function fetchWithRetry(
         lastError = err instanceof Error ? err : new Error(String(err));
       }
       if (attempt < retries) {
-        await new Promise((r) => setTimeout(r, RETRY_DELAYS[attempt]));
+        await backoff(attempt, lastError);
       }
     }
   }
@@ -104,7 +116,7 @@ export async function getBinary(
   endpoint: string,
   params: Record<string, string>,
   apiKey: string,
-  options: { timeout?: number; retries?: number } = {}
+  options: { timeout?: number; retries?: number; onRetry?: FetchOptions["onRetry"] } = {}
 ): Promise<ArrayBuffer> {
   const url = new URL(`${BASE_URL}/${endpoint}.xml`);
   url.searchParams.set("crtfc_key", apiKey);
@@ -116,6 +128,7 @@ export async function getBinary(
     timeout: options.timeout ?? BINARY_TIMEOUT,
     retries: options.retries ?? BINARY_RETRIES,
     endpoint,
+    onRetry: options.onRetry,
   });
   if (!response.ok) {
     throw new OpenDartNetworkError("http", endpoint, 1, 1, response.status);

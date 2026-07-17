@@ -12,6 +12,16 @@ import { writeFileSync, readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { XMLParser } from "fast-xml-parser";
 import { unzipMainXml, NotZipError } from "../lib/opendart/zip";
+import { getBinary } from "../lib/opendart/client";
+
+/**
+ * The registry is a 3.4MB ZIP that DART builds on demand, and CI runners sit
+ * outside Korea: the weekly job died on a bare 120s fetch with no retry. Give it
+ * room and let the client's backoff handle a slow or flaky response.
+ * Worst case ~16 min, bounded by timeout-minutes on the workflow step.
+ */
+const DOWNLOAD_TIMEOUT = 240_000;
+const DOWNLOAD_RETRIES = 3;
 
 // Load .env if present
 const envPath = join(process.cwd(), ".env");
@@ -104,18 +114,24 @@ function validate(entries: Entry[], listedCount: number, outputPath: string): vo
 }
 
 async function main() {
-  console.log("Downloading corp code ZIP from OpenDART...");
+  console.log(
+    `Downloading corp code ZIP from OpenDART ` +
+      `(timeout ${DOWNLOAD_TIMEOUT / 1000}s per attempt, up to ${DOWNLOAD_RETRIES + 1} attempts)...`
+  );
 
-  const url = `https://opendart.fss.or.kr/api/corpCode.xml?crtfc_key=${API_KEY}`;
-  const response = await fetch(url, { signal: AbortSignal.timeout(120000) });
+  const startedAt = Date.now();
+  const buffer = await getBinary("corpCode", {}, API_KEY!, {
+    timeout: DOWNLOAD_TIMEOUT,
+    retries: DOWNLOAD_RETRIES,
+    onRetry: ({ attempt, maxAttempts, delayMs, error }) =>
+      console.warn(
+        `  attempt ${attempt}/${maxAttempts} failed after ${((Date.now() - startedAt) / 1000).toFixed(0)}s ` +
+          `(${error.message}) — retrying in ${delayMs / 1000}s`
+      ),
+  });
 
-  if (!response.ok) {
-    console.error(`HTTP error: ${response.status} ${response.statusText}`);
-    process.exit(1);
-  }
-
-  const buffer = await response.arrayBuffer();
-  console.log(`Downloaded ${(buffer.byteLength / 1024 / 1024).toFixed(1)}MB ZIP`);
+  const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
+  console.log(`Downloaded ${(buffer.byteLength / 1024 / 1024).toFixed(1)}MB ZIP in ${elapsed}s`);
 
   // Unzip + decode via the shared helper (also used by the document.xml tool)
   let extracted;
