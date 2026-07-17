@@ -60,9 +60,14 @@ async function main() {
   console.log(`Extracted ${extracted.name} (${(xml.length / 1024 / 1024).toFixed(1)}M chars)`);
 
   // Parse XML with fast-xml-parser
+  // parseTagValue:false is load-bearing. Left on (the default), fast-xml-parser
+  // reads <stock_code>005930</stock_code> as the number 5930 and the leading
+  // zeros are gone before we ever see the value — 55% of listed companies.
+  // Every field here is an identifier, not a quantity: keep them as strings.
   const parser = new XMLParser({
     ignoreAttributes: true,
     trimValues: true,
+    parseTagValue: false,
     isArray: (name) => name === "list",
   });
   const parsed = parser.parse(xml);

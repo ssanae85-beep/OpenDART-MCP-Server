@@ -24,7 +24,15 @@ function initCache(): CorpCodeCache {
   const byCorpCode = new Map<string, CorpCodeEntry>();
   const byStockCode = new Map<string, CorpCodeEntry>();
 
+  // Codes are fixed-width identifiers, not numbers. Restore any leading zeros
+  // lost upstream so a stale data file still resolves "005930" instead of
+  // silently answering "no such company".
   for (const entry of corpCodesData) {
+    entry.corp_code = String(entry.corp_code ?? "").padStart(8, "0");
+    entry.stock_code = entry.stock_code
+      ? String(entry.stock_code).padStart(6, "0")
+      : "";
+
     byCorpCode.set(entry.corp_code, entry);
     if (entry.stock_code) {
       byStockCode.set(entry.stock_code, entry);
@@ -45,12 +53,17 @@ export async function searchCompanies(
 
   if (!q) return [];
 
-  // 1. Exact stock code match (6-digit)
-  const byStock = c.byStockCode.get(q);
+  // 1. Exact stock code match (6-digit). Also accept a zero-stripped code —
+  // users copy "5930" out of tools that treated it as a number.
+  const byStock =
+    c.byStockCode.get(q) ??
+    (/^\d{1,6}$/.test(q) ? c.byStockCode.get(q.padStart(6, "0")) : undefined);
   if (byStock) return [byStock];
 
-  // 2. Exact corp code match (8-digit)
-  const byCode = c.byCorpCode.get(q);
+  // 2. Exact corp code match (8-digit), same tolerance
+  const byCode =
+    c.byCorpCode.get(q) ??
+    (/^\d{1,8}$/.test(q) ? c.byCorpCode.get(q.padStart(8, "0")) : undefined);
   if (byCode) return [byCode];
 
   // 3. Abbreviation match (삼전 → 삼성전자)
@@ -134,6 +147,20 @@ function sortByListed(entries: CorpCodeEntry[]): CorpCodeEntry[] {
     const bListed = b.stock_code ? 0 : 1;
     return aListed - bListed;
   });
+}
+
+/**
+ * Resolve corp_codes to names. Multi-company endpoints return codes only, so
+ * without this a comparison table can't say which row is which company.
+ */
+export function getCorpNames(corpCodes: string[]): Record<string, string> {
+  const c = initCache();
+  const out: Record<string, string> = {};
+  for (const code of corpCodes) {
+    const entry = c.byCorpCode.get(String(code).padStart(8, "0"));
+    if (entry) out[code] = entry.corp_name;
+  }
+  return out;
 }
 
 export async function getCorpCodeByName(
