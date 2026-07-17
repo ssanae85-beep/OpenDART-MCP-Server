@@ -108,7 +108,7 @@ async function main() {
   check(
     "params",
     Object.keys(doc!.inputSchema.properties ?? {}).sort(),
-    ["api_key", "attachment", "max_chars", "mode", "rcept_no", "section"]
+    ["api_key", "attachment", "max_chars", "mode", "offset", "rcept_no", "section"]
   );
 
   const call = async (args: Record<string, unknown>) => {
@@ -164,7 +164,44 @@ async function main() {
   const trunc = await call({ rcept_no: "20240312000736", mode: "section", section: "사업의 개요", max_chars: 1000 });
   check("truncation flagged", trunc.text.includes("잘렸습니다"), true);
   check("respects cap (plus notice)", trunc.text.length < 1400, true);
+  check("reports the next offset", /offset=\d+/.test(trunc.text), true);
   console.log(trunc.text.slice(-260));
+
+  console.log("\n--- offset paging ---");
+  const nextOffset = Number(trunc.text.match(/offset=(\d+)/)![1]);
+  const page2 = await call({
+    rcept_no: "20240312000736", mode: "section", section: "사업의 개요",
+    offset: nextOffset, max_chars: 1000,
+  });
+  check("page 2 reports its window", page2.text.includes(`${(nextOffset + 1).toLocaleString("ko-KR")}–`), true);
+  check("page 2 keeps the header", page2.text.includes("### "), true);
+
+  // Walk the whole section to prove nothing is unreachable
+  let cursor = 0;
+  let pages = 0;
+  let assembled = "";
+  for (;;) {
+    const p = await call({
+      rcept_no: "20240312000736", mode: "section", section: "사업의 개요",
+      offset: cursor, max_chars: 1000,
+    });
+    pages++;
+    const body = p.text.split("\n\n").slice(1).join("\n\n").split("\n---\n")[0];
+    assembled += body;
+    const m = p.text.match(/이어서 보려면 offset=(\d+)/);
+    if (!m || pages > 20) break;
+    cursor = Number(m[1]);
+  }
+  console.log(`  walked ${pages} pages, assembled ${assembled.length} chars`);
+  check("paging terminates", pages < 20, true);
+  check("last page has no continuation", pages > 1, true);
+  check("reached the tail", assembled.includes("반도체 부문."), true);
+
+  console.log("\n--- offset past the end ---");
+  const beyond = await call({
+    rcept_no: "20240312000736", mode: "section", section: "사업의 개요", offset: 999999,
+  });
+  check("explains instead of returning blank", beyond.text.includes("전체 길이를 넘었습니다"), true);
 
   console.log("\n--- mode=section not found ---");
   const missing = await call({ rcept_no: "20240312000736", mode: "section", section: "없는섹션" });

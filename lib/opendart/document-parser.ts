@@ -268,3 +268,36 @@ export function truncate(text: string, maxChars: number): Truncated {
   if (totalChars <= maxChars) return { text, truncated: false, totalChars };
   return { text: text.slice(0, maxChars), truncated: true, totalChars };
 }
+
+export interface Page {
+  text: string;
+  totalChars: number;
+  /** 0-based offset of the first character returned */
+  start: number;
+  /** exclusive offset of the last character returned */
+  end: number;
+  hasMore: boolean;
+  /** offset was past the end of the text */
+  beyondEnd: boolean;
+}
+
+/**
+ * Window into a long section.
+ *
+ * Not every filing splits its notes into titled sections — 비나텍's 사업보고서
+ * puts all 397k chars of them under one title, with the note headings as plain
+ * paragraphs. Without paging, everything past the first window is unreachable.
+ */
+export function paginate(text: string, offset: number, maxChars: number): Page {
+  const totalChars = text.length;
+  const start = Math.min(Math.max(0, offset), totalChars);
+  const end = Math.min(start + maxChars, totalChars);
+  return {
+    text: text.slice(start, end),
+    totalChars,
+    start,
+    end,
+    hasMore: end < totalChars,
+    beyondEnd: offset > totalChars,
+  };
+}
