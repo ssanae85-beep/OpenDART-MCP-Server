@@ -6,11 +6,17 @@
  * real XML parser, which would reject whole documents over minor defects.
  */
 
-/** Elements that establish document hierarchy. A TITLE's depth is the stack depth where it appears. */
+/**
+ * Elements that establish document hierarchy. A TITLE's depth is the stack
+ * depth where it appears.
+ *
+ * DOCUMENT/BODY/LIBRARY are deliberately excluded. LIBRARY is a layout
+ * container, not a heading level, and filings nest it freely — 삼성전자's
+ * 사업보고서 opens 27 of them. Counting it made every title after a nested
+ * LIBRARY look one level deeper, which put 연결재무제표 and the notes *inside*
+ * 요약재무정보 and stretched that section to 4.4M chars.
+ */
 const STRUCTURAL_TAGS = new Set([
-  "DOCUMENT",
-  "BODY",
-  "LIBRARY",
   "PART",
   "SECTION-1",
   "SECTION-2",

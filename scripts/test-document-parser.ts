@@ -152,6 +152,43 @@ check("TABLE-GROUP not mistaken for a table", noteText.includes("TABLE-GROUP"), 
 console.log("\n--- keyword case/space insensitivity ---");
 check("spaces ignored", findSection(doc, "주요제품")?.index, 8);
 
+// Real filings use LIBRARY + SECTION-n and no PART at all, and they open a
+// fresh nested LIBRARY between sibling sections. Counting LIBRARY as a level
+// made every later title look one deeper, so 요약재무정보 swallowed the whole
+// 재무 chapter (4.4M chars in 삼성전자's filing).
+console.log("\n--- nested LIBRARY must not create a heading level ---");
+const LIBRARY_SAMPLE = `<?xml version="1.0" encoding="utf-8"?>
+<DOCUMENT>
+<DOCUMENT-NAME ACODE="11011">사업보고서</DOCUMENT-NAME>
+<BODY>
+<LIBRARY>
+<SECTION-1 ACLASS="MANDATORY">
+<TITLE ATOC="Y">III. 재무에 관한 사항</TITLE>
+<SECTION-2 ACLASS="MANDATORY">
+<TITLE ATOC="Y">1. 요약재무정보</TITLE>
+<P>요약재무정보 본문.</P>
+</SECTION-2><LIBRARY>
+<SECTION-2 ACLASS="MANDATORY">
+<TITLE ATOC="Y">2. 연결재무제표</TITLE>
+<P>연결재무제표 본문.</P>
+</SECTION-2>
+</LIBRARY>
+</SECTION-1>
+</LIBRARY>
+</BODY>
+</DOCUMENT>`;
+
+const lib = parseDocument(LIBRARY_SAMPLE);
+for (const s of lib.sections) console.log(`  ${"  ".repeat(s.depth)}${s.index}. ${s.title} [d${s.depth}]`);
+const summary = findSection(lib, "요약재무정보")!;
+const consolidated = findSection(lib, "연결재무제표")!;
+check("chapter at depth 0", lib.sections[0].depth, 0);
+check("siblings share a depth", summary.depth, consolidated.depth);
+check("sibling depth is 1", summary.depth, 1);
+check("summary body is its own", getSectionText(lib, summary), "요약재무정보 본문.");
+check("summary does not swallow the next section", getSectionText(lib, summary).includes("연결재무제표 본문"), false);
+check("next section still readable", getSectionText(lib, consolidated), "연결재무제표 본문.");
+
 console.log("\n--- misc ---");
 check("no match -> null", findSection(doc, "존재하지않는섹션"), null);
 check("entity &amp;", extractText("<P>R&amp;D</P>"), "R&D");
