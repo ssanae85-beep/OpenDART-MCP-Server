@@ -34,6 +34,27 @@ const SAMPLE = `<?xml version="1.0" encoding="utf-8"?>
 </LIBRARY></BODY>
 </DOCUMENT>`;
 
+/** A filing's ZIP also carries attachments, each its own document. */
+const AUDIT = `<?xml version="1.0" encoding="utf-8"?>
+<DOCUMENT>
+<DOCUMENT-NAME ACODE="00760">감사보고서</DOCUMENT-NAME>
+<COMPANY-NAME>삼성전자주식회사</COMPANY-NAME>
+<BODY><LIBRARY><PART>
+<TITLE>독립된 감사인의 감사보고서</TITLE>
+<SECTION-1><TITLE>감사의견</TITLE><P>적정의견을 표명합니다.</P></SECTION-1>
+</PART></LIBRARY></BODY>
+</DOCUMENT>`;
+
+const AUDIT_CONSOLIDATED = `<?xml version="1.0" encoding="utf-8"?>
+<DOCUMENT>
+<DOCUMENT-NAME ACODE="00761">연결감사보고서</DOCUMENT-NAME>
+<COMPANY-NAME>삼성전자주식회사</COMPANY-NAME>
+<BODY><LIBRARY><PART>
+<TITLE>독립된 감사인의 연결감사보고서</TITLE>
+<SECTION-1><TITLE>연결 감사의견</TITLE><P>연결재무제표에 대해 적정의견입니다.</P></SECTION-1>
+</PART></LIBRARY></BODY>
+</DOCUMENT>`;
+
 const ERROR_BODY = `<?xml version="1.0" encoding="UTF-8"?>
 <result><status>013</status><message>조회된 데이타가 없습니다.</message></result>`;
 
@@ -53,7 +74,13 @@ globalThis.fetch = (async (input: RequestInfo | URL) => {
   if (serveError) {
     return new Response(toBody(strToU8(ERROR_BODY)), { status: 200 });
   }
-  const zipped = zipSync({ "20240312000736.xml": strToU8(SAMPLE) });
+  // Attachments come first in the archive: the main doc must be found by name,
+  // not by position.
+  const zipped = zipSync({
+    "20240312000736_00760.xml": strToU8(AUDIT),
+    "20240312000736.xml": strToU8(SAMPLE),
+    "20240312000736_00761.xml": strToU8(AUDIT_CONSOLIDATED),
+  });
   return new Response(toBody(zipped), { status: 200 });
 }) as typeof realFetch;
 
@@ -81,7 +108,7 @@ async function main() {
   check(
     "params",
     Object.keys(doc!.inputSchema.properties ?? {}).sort(),
-    ["api_key", "max_chars", "mode", "rcept_no", "section"]
+    ["api_key", "attachment", "max_chars", "mode", "rcept_no", "section"]
   );
 
   const call = async (args: Record<string, unknown>) => {
@@ -99,6 +126,29 @@ async function main() {
   check("doc name in header", toc.text.includes("사업보고서 — 삼성전자"), true);
   check("lists sections", toc.text.includes("1. I. 회사의 개요"), true);
   check("toc has no body text", toc.text.includes("1969년 설립"), false);
+
+  console.log("\n--- attachments listed in toc ---");
+  check("lists all documents", toc.text.includes("이 접수번호에 포함된 문서 3개"), true);
+  check("main report first", toc.text.includes("1. 사업보고서 (본문"), true);
+  check("attachment listed", toc.text.includes("2. 감사보고서 (첨부"), true);
+  check("consolidated attachment listed", toc.text.includes("3. 연결감사보고서 (첨부"), true);
+  check("marks current document", toc.text.includes("← 현재 문서"), true);
+
+  console.log("\n--- attachment by number ---");
+  const att = await call({ rcept_no: "20240312000736", mode: "section", section: "감사의견", attachment: "2" });
+  console.log(att.text);
+  check("reads the attachment", att.text.includes("적정의견을 표명합니다"), true);
+  check("header names attachment", att.text.includes("## 감사보고서"), true);
+
+  console.log("\n--- attachment by name ---");
+  const byName = await call({ rcept_no: "20240312000736", mode: "toc", attachment: "연결감사보고서" });
+  check("selects by name", byName.text.includes("## 연결감사보고서"), true);
+  check("its own toc", byName.text.includes("연결 감사의견"), true);
+
+  console.log("\n--- attachment not found ---");
+  const badAtt = await call({ rcept_no: "20240312000736", attachment: "없는첨부" });
+  check("isError", badAtt.isError, true);
+  check("lists available", badAtt.text.includes("2. 감사보고서"), true);
 
   console.log("\n--- caching ---");
   check("one fetch so far", requestCount, 1);

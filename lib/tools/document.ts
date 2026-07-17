@@ -2,7 +2,13 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { resolveApiKey } from "@/lib/opendart/client";
 import { formatApiError } from "@/lib/opendart/errors";
-import { fetchDocument } from "@/lib/opendart/document-cache";
+import {
+  fetchDocumentBundle,
+  findEntry,
+  getParsed,
+  type BundleEntry,
+  type DocumentBundle,
+} from "@/lib/opendart/document-cache";
 import {
   findSection,
   getSectionText,
@@ -14,44 +20,67 @@ import {
 const DEFAULT_MAX_CHARS = 20000;
 const HARD_MAX_CHARS = 50000;
 
-function header(doc: ParsedDocument, rceptNo: string): string {
-  const name = doc.docName || "공시 원문";
+function header(entry: BundleEntry, doc: ParsedDocument, rceptNo: string): string {
+  const name = entry.docName || doc.docName || "공시 원문";
   const company = doc.companyName ? ` — ${doc.companyName}` : "";
   return `## ${name}${company}\n접수번호: ${rceptNo}`;
 }
 
-function renderToc(doc: ParsedDocument, rceptNo: string): string {
-  if (doc.sections.length === 0) {
-    return [
-      header(doc, rceptNo),
-      "",
-      "이 문서에서 목차(섹션 제목)를 찾지 못했습니다. mode=\"full\"로 원문을 직접 확인하세요.",
-      "No section titles found. Use mode=\"full\" to read the raw text.",
-    ].join("\n");
-  }
+/** List every document in the filing's ZIP, marking the one being read. */
+function renderAttachments(bundle: DocumentBundle, selected: BundleEntry): string {
+  if (bundle.entries.length === 1) return "";
 
-  const lines = [header(doc, rceptNo), "", `총 ${doc.sections.length}개 섹션`, ""];
+  const lines = [`이 접수번호에 포함된 문서 ${bundle.entries.length}개:`];
 
-  for (const s of doc.sections) {
-    const indent = "  ".repeat(s.depth);
-    const size = s.end - s.start;
-    lines.push(`${indent}${s.index}. ${s.title} (~${Math.round(size / 1000)}k자)`);
+  for (const e of bundle.entries) {
+    const size = `${(e.chars / 1000).toFixed(0)}k자`;
+    const role = e.index === 1 ? "본문" : "첨부";
+    const marker = e.index === selected.index ? "  ← 현재 문서" : "";
+    lines.push(`  ${e.index}. ${e.docName} (${role}, ${size})${marker}`);
   }
 
   lines.push(
     "",
-    '> 본문을 보려면 mode="section"에 위 번호 또는 제목을 넘기세요.',
-    '> e.g. mode="section", section="3" / section="사업의 내용"'
+    '> 다른 문서를 읽으려면 attachment에 번호 또는 이름을 넘기세요.',
+    '> e.g. attachment="2" / attachment="감사보고서"'
   );
 
   return lines.join("\n");
 }
 
-function withTruncationNotice(
-  body: string,
-  maxChars: number,
-  hint: string
-): string {
+function renderToc(bundle: DocumentBundle, entry: BundleEntry, doc: ParsedDocument): string {
+  const parts = [header(entry, doc, bundle.rceptNo)];
+
+  const attachments = renderAttachments(bundle, entry);
+  if (attachments) parts.push("", attachments);
+
+  if (doc.sections.length === 0) {
+    parts.push(
+      "",
+      '이 문서에서 목차(섹션 제목)를 찾지 못했습니다. mode="full"로 원문을 직접 확인하세요.',
+      'No section titles found. Use mode="full" to read the raw text.'
+    );
+    return parts.join("\n");
+  }
+
+  parts.push("", `총 ${doc.sections.length}개 섹션`, "");
+
+  for (const s of doc.sections) {
+    const indent = "  ".repeat(s.depth);
+    const size = s.end - s.start;
+    parts.push(`${indent}${s.index}. ${s.title} (~${Math.round(size / 1000)}k자)`);
+  }
+
+  parts.push(
+    "",
+    '> 본문을 보려면 mode="section"에 위 번호 또는 제목을 넘기세요.',
+    '> e.g. mode="section", section="3" / section="사업의 내용"'
+  );
+
+  return parts.join("\n");
+}
+
+function withTruncationNotice(body: string, maxChars: number, hint: string): string {
   const { text, truncated, totalChars } = truncate(body, maxChars);
   if (!truncated) return text;
 
@@ -77,6 +106,9 @@ Filings are large (often several MB), so this tool is paged by section:
   2. mode="section" — return one section's text, chosen by TOC number or title keyword.
   3. mode="full" — the whole document as text. Only for short filings; long ones get truncated.
 
+A filing's archive holds the report plus its attachments (감사보고서, 연결감사보고서 …).
+mode="toc" lists them; use attachment to read one.
+
 Output is plain text with XML markup stripped; tables render as pipe-separated rows.
 Responses are capped at max_chars and clearly marked when truncated.
 
@@ -84,12 +116,14 @@ Args:
   - rcept_no: 14-digit receipt number (접수번호, e.g. "20240312000736")
   - mode (optional): "toc" | "section" | "full" (default: "toc")
   - section (required when mode="section"): TOC number (e.g. "3") or title keyword (e.g. "사업의 내용")
+  - attachment (optional): which document in the filing — number (e.g. "2") or name (e.g. "감사보고서"). Defaults to the main report.
   - max_chars (optional): Response character cap (default: ${DEFAULT_MAX_CHARS}, max: ${HARD_MAX_CHARS})
   - api_key (optional): Override the server's OpenDART API key`,
       inputSchema: {
         rcept_no: z.string().regex(/^\d{14}$/).describe("14-digit receipt number (접수번호)"),
         mode: z.enum(["toc", "section", "full"]).default("toc").describe("toc: section list, section: one section, full: whole document"),
         section: z.string().optional().describe('TOC number or title keyword, e.g. "3" or "사업의 내용"'),
+        attachment: z.string().optional().describe('Document within the filing: number or name, e.g. "2" or "감사보고서". Omit for the main report.'),
         max_chars: z.number().int().min(1000).max(HARD_MAX_CHARS).default(DEFAULT_MAX_CHARS).describe("Max characters to return"),
         api_key: z.string().optional().describe("Optional: your own OpenDART API key"),
       },
@@ -100,7 +134,7 @@ Args:
         openWorldHint: true,
       },
     },
-    async ({ rcept_no, mode, section, max_chars, api_key }) => {
+    async ({ rcept_no, mode, section, attachment, max_chars, api_key }) => {
       try {
         const key = resolveApiKey(api_key);
 
@@ -114,16 +148,38 @@ Args:
           };
         }
 
-        const doc = await fetchDocument(rcept_no, key);
+        const bundle = await fetchDocumentBundle(rcept_no, key);
+
+        let entry: BundleEntry;
+        if (attachment?.trim()) {
+          const found = findEntry(bundle, attachment);
+          if (!found) {
+            const available = bundle.entries
+              .map((e) => `  ${e.index}. ${e.docName}`)
+              .join("\n");
+            return {
+              content: [{
+                type: "text" as const,
+                text: `문서를 찾지 못했습니다: "${attachment}" / Attachment not found.\n\n이 접수번호의 문서 (available):\n${available}`,
+              }],
+              isError: true,
+            };
+          }
+          entry = found;
+        } else {
+          entry = bundle.entries[0];
+        }
+
+        const doc = getParsed(entry);
 
         if (mode === "toc") {
-          return { content: [{ type: "text" as const, text: renderToc(doc, rcept_no) }] };
+          return { content: [{ type: "text" as const, text: renderToc(bundle, entry, doc) }] };
         }
 
         if (mode === "full") {
           const body = extractText(doc.raw);
           const text = withTruncationNotice(
-            `${header(doc, rcept_no)}\n\n${body}`,
+            `${header(entry, doc, rcept_no)}\n\n${body}`,
             max_chars,
             '> 나머지를 보려면 mode="toc"로 목차를 확인한 뒤 mode="section"으로 필요한 섹션만 조회하세요.'
           );
@@ -147,7 +203,7 @@ Args:
 
         const body = getSectionText(doc, target);
         const text = withTruncationNotice(
-          `${header(doc, rcept_no)}\n\n### ${target.index}. ${target.title}\n\n${body || "(빈 섹션 / empty section)"}`,
+          `${header(entry, doc, rcept_no)}\n\n### ${target.index}. ${target.title}\n\n${body || "(빈 섹션 / empty section)"}`,
           max_chars,
           `> 하위 섹션을 개별 조회하거나 max_chars를 늘리세요 (최대 ${HARD_MAX_CHARS.toLocaleString("ko-KR")}).`
         );
