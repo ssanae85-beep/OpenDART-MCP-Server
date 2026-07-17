@@ -34,7 +34,6 @@ interface Entry {
   corp_code: string;
   corp_name: string;
   stock_code: string;
-  modify_date: string;
 }
 
 /** Floors, not targets: real counts are ~118k total / ~3.9k listed. */
@@ -150,10 +149,10 @@ async function main() {
   const rawList = parsed?.result?.list || parsed?.list || [];
   const entries = rawList
     .map((item: Record<string, unknown>) => ({
+      // modify_date is intentionally dropped — see CorpCodeEntry
       corp_code: String(item.corp_code || "").trim().padStart(8, "0"),
       corp_name: String(item.corp_name || "").trim(),
       stock_code: String(item.stock_code || "").trim() || "",
-      modify_date: String(item.modify_date || "").trim(),
     }))
     .filter((e: { corp_name: string }) => e.corp_name.length > 0);
 

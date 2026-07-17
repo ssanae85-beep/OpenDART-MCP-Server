@@ -1,8 +1,14 @@
+/**
+ * An entry in the local name → corp_code index (data/corp-codes.json).
+ *
+ * DART's registry also carries modify_date. It is deliberately not kept: nothing
+ * reads it, and it changes constantly, which would bury the real changes (new
+ * listings, renames) under a weekly wall of noise in the generated file.
+ */
 export interface CorpCodeEntry {
   corp_code: string;
   corp_name: string;
   stock_code: string;
-  modify_date: string;
 }
 
 export interface OpenDartResponse {
