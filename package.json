@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "update-corp-codes": "tsx scripts/update-corp-codes.ts"
+    "update-corp-codes": "tsx scripts/update-corp-codes.ts",
+    "test:document": "tsx scripts/test-document-parser.ts && tsx scripts/test-document-tool.ts"
   },
   "dependencies": {
     "fflate": "^0.8.2",

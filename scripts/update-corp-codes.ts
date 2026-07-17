@@ -11,6 +11,7 @@
 import { writeFileSync, readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { XMLParser } from "fast-xml-parser";
+import { unzipMainXml, NotZipError } from "../lib/opendart/zip";
 
 // Load .env if present
 const envPath = join(process.cwd(), ".env");
@@ -41,41 +42,22 @@ async function main() {
   }
 
   const buffer = await response.arrayBuffer();
-  const uint8 = new Uint8Array(buffer);
-
-  // Verify ZIP magic bytes (PK)
-  if (uint8[0] !== 0x50 || uint8[1] !== 0x4b) {
-    const text = new TextDecoder("utf-8").decode(uint8.slice(0, 500));
-    console.error("Response is not a ZIP file:", text);
-    process.exit(1);
-  }
-
   console.log(`Downloaded ${(buffer.byteLength / 1024 / 1024).toFixed(1)}MB ZIP`);
 
-  // Unzip using fflate (already a project dependency)
-  const { unzipSync } = await import("fflate");
-  const unzipped = unzipSync(uint8);
-  const fileNames = Object.keys(unzipped);
-  const xmlFileName = fileNames.find((f) => f.toLowerCase().endsWith(".xml")) || fileNames[0];
-
-  if (!xmlFileName) {
-    console.error("No XML file found in ZIP. Files:", fileNames);
-    process.exit(1);
+  // Unzip + decode via the shared helper (also used by the document.xml tool)
+  let extracted;
+  try {
+    extracted = await unzipMainXml(buffer);
+  } catch (err) {
+    if (err instanceof NotZipError) {
+      console.error("Response is not a ZIP file:", err.preview);
+      process.exit(1);
+    }
+    throw err;
   }
 
-  const rawBytes = unzipped[xmlFileName];
-  console.log(`Extracted ${xmlFileName} (${(rawBytes.length / 1024 / 1024).toFixed(1)}MB)`);
-
-  // Detect encoding from XML declaration
-  const asciiPreview = new TextDecoder("ascii").decode(rawBytes.slice(0, 200));
-  const encMatch = asciiPreview.match(/encoding=["']([^"']+)["']/i);
-  const detectedEnc = encMatch?.[1].toLowerCase() ?? "utf-8";
-  console.log(`Detected encoding: ${detectedEnc}`);
-
-  const decoder = new TextDecoder(
-    detectedEnc === "euc-kr" || detectedEnc === "cp949" ? "euc-kr" : "utf-8"
-  );
-  const xml = decoder.decode(rawBytes);
+  const xml = extracted.text;
+  console.log(`Extracted ${extracted.name} (${(xml.length / 1024 / 1024).toFixed(1)}M chars)`);
 
   // Parse XML with fast-xml-parser
   const parser = new XMLParser({

@@ -93,10 +93,18 @@ export async function getJson(
   return data;
 }
 
+/**
+ * Fetch a binary (ZIP) endpoint.
+ *
+ * The BINARY_TIMEOUT/BINARY_RETRIES defaults can exceed Vercel's 60s function
+ * limit in the worst case, so callers running inside a request should pass a
+ * budget that fits (see lib/tools/document.ts).
+ */
 export async function getBinary(
   endpoint: string,
   params: Record<string, string>,
-  apiKey: string
+  apiKey: string,
+  options: { timeout?: number; retries?: number } = {}
 ): Promise<ArrayBuffer> {
   const url = new URL(`${BASE_URL}/${endpoint}.xml`);
   url.searchParams.set("crtfc_key", apiKey);
@@ -105,8 +113,8 @@ export async function getBinary(
   }
 
   const response = await fetchWithRetry(url.toString(), {
-    timeout: BINARY_TIMEOUT,
-    retries: BINARY_RETRIES,
+    timeout: options.timeout ?? BINARY_TIMEOUT,
+    retries: options.retries ?? BINARY_RETRIES,
     endpoint,
   });
   if (!response.ok) {

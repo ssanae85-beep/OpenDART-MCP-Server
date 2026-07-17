@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { setSessionApiKey, getSessionApiKey } from "@/lib/opendart/client";
 import { registerCompanyTools } from "./company";
+import { registerDocumentTools } from "./document";
 import { registerFinancialTools } from "./financial";
 import { registerDisclosureTools } from "./disclosure";
 import { registerShareholdingTools } from "./shareholding";
@@ -57,6 +58,7 @@ export function registerAllTools(server: McpServer) {
   registerConfigTools(server);         // API key configuration (first)
   registerWorkflowTools(server);       // Workflow tools (most useful)
   registerCompanyTools(server);        // Company search & info
+  registerDocumentTools(server);       // Disclosure document full text
   registerFinancialTools(server);      // Financial statements & indicators
   registerDisclosureTools(server);     // Periodic report details
   registerShareholdingTools(server);   // Shareholding disclosures

@@ -13,6 +13,26 @@
 | 회사명/종목코드로 기업코드 찾기 | `opendart_search_company` |
 | 기업 기본정보 (대표이사, 주소, 업종 등) | `opendart_get_company_info` |
 | 공시 검색 | `opendart_search_disclosure` |
+| 공시 원문 읽기 (보고서 본문) | `opendart_get_document` |
+
+### 공시 원문 (`opendart_get_document`)
+
+구조화된 API로 답할 수 없는 서술형 내용(사업 설명, 위험요소, 계약 조건 등)을 읽을 때 사용합니다.
+숫자·재무·주주 정보는 전용 도구가 더 정확하므로 원문 대신 그쪽을 쓰세요.
+
+1. `opendart_search_disclosure`로 `rcept_no`(접수번호)를 먼저 확보
+2. `mode="toc"`로 목차 확인 (기본값)
+3. `mode="section"`에 목차 번호 또는 제목을 넘겨 필요한 부분만 조회
+
+| 상황 | 파라미터 |
+|------|---------|
+| 목차 보기 | `mode="toc"` |
+| 특정 섹션 | `mode="section"`, `section="3"` 또는 `section="사업의 내용"` |
+| 짧은 공시 전체 | `mode="full"` |
+
+⚠️ 원문은 수 MB입니다. **`mode="full"`을 사업보고서에 쓰지 마세요** — 잘려서 앞부분만 나옵니다.
+주요사항보고서처럼 짧은 공시에만 사용하고, 사업보고서·분기보고서는 반드시 `toc` → `section` 순으로 접근하세요.
+응답이 잘리면 그렇게 표시되며, 그때는 하위 섹션을 따로 조회하거나 `max_chars`를 올리세요 (최대 50000).
 
 ### 재무 정보
 | 상황 | 도구 | 파라미터 참고 |
