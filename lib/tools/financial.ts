@@ -2,7 +2,8 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { getJson, resolveApiKey } from "@/lib/opendart/client";
 import { formatApiError, isNoData } from "@/lib/opendart/errors";
-import { formatFinancialTableMd, formatGenericTableMd } from "@/lib/opendart/formatters";
+import { formatFinancialTableMd, formatGenericTableMd, type FinancialContext } from "@/lib/opendart/formatters";
+import { getCorpNames } from "@/lib/opendart/cache";
 
 const reprtCodeSchema = z.enum(["11011", "11012", "11013", "11014"]).describe(
   "Report type: 11011=Annual, 11012=Semi-annual, 11013=Q1, 11014=Q3"
@@ -19,7 +20,7 @@ function registerFinancialTool(
   description: string,
   endpoint: string,
   extraSchema: Record<string, z.ZodTypeAny>,
-  formatFn: (data: Record<string, unknown>) => string
+  formatFn: (data: Record<string, unknown>, context: FinancialContext) => string
 ) {
   server.registerTool(
     name,
@@ -53,7 +54,11 @@ function registerFinancialTool(
           return { content: [{ type: "text" as const, text: `No data found. / 조회된 데이터가 없습니다. (${endpoint})` }] };
         }
 
-        const md = formatFn(data);
+        const md = formatFn(data, {
+          bsns_year: params.bsns_year as string,
+          reprt_code: params.reprt_code as string,
+          fs_div: params.fs_div as string | undefined,
+        });
         return { content: [{ type: "text" as const, text: md }] };
       } catch (err) {
         return { content: [{ type: "text" as const, text: formatApiError(err) }], isError: true };
@@ -78,10 +83,10 @@ Args:
   - fs_div: OFS=Individual, CFS=Consolidated (default: CFS)`,
     "fnlttSinglAcnt",
     { fs_div: fsDiv },
-    (data) => formatFinancialTableMd(
+    (data, context) => formatFinancialTableMd(
       data.list as Array<Record<string, unknown>>,
       "단일회사 주요계정 (Key Accounts)",
-      { groupByFsDiv: true }
+      { groupByFsDiv: true, context }
     )
   );
 
@@ -125,6 +130,13 @@ Args:
         const items = data.list as Array<Record<string, unknown>>;
         const md = formatFinancialTableMd(items, "다중회사 주요계정 (Multi-Company Accounts)", {
           groupByFsDiv: true,
+          context: {
+            bsns_year: params.bsns_year,
+            reprt_code: params.reprt_code,
+            fs_div: params.fs_div,
+          },
+          // fnlttMultiAcnt identifies companies by code only
+          corpNames: getCorpNames(items.map((i) => String(i.corp_code ?? ""))),
         });
         return { content: [{ type: "text" as const, text: md }] };
       } catch (err) {
@@ -145,10 +157,10 @@ Args:
   - corp_code, bsns_year, reprt_code, fs_div`,
     "fnlttSinglAcntAll",
     { fs_div: fsDiv },
-    (data) => formatFinancialTableMd(
+    (data, context) => formatFinancialTableMd(
       data.list as Array<Record<string, unknown>>,
       "전체 재무제표 (Full Statement)",
-      { groupByFsDiv: true }
+      { groupByFsDiv: true, context }
     )
   );
 

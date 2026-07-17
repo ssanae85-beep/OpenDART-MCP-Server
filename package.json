@@ -8,7 +8,9 @@
     "start": "next start",
     "update-corp-codes": "tsx scripts/update-corp-codes.ts",
     "test:document": "tsx scripts/test-document-parser.ts && tsx scripts/test-document-tool.ts",
-    "debug:document": "tsx scripts/debug-document-raw.ts"
+    "test:financial": "tsx scripts/test-financial-format.ts",
+    "debug:document": "tsx scripts/debug-document-raw.ts",
+    "debug:api": "tsx scripts/debug-api-raw.ts"
   },
   "dependencies": {
     "fflate": "^0.8.2",
