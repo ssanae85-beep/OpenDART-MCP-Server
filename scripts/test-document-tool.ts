@@ -108,7 +108,7 @@ async function main() {
   check(
     "params",
     Object.keys(doc!.inputSchema.properties ?? {}).sort(),
-    ["api_key", "attachment", "max_chars", "mode", "offset", "rcept_no", "section"]
+    ["api_key", "attachment", "max_chars", "mode", "offset", "query", "rcept_no", "section"]
   );
 
   const call = async (args: Record<string, unknown>) => {
@@ -196,6 +196,46 @@ async function main() {
   check("paging terminates", pages < 20, true);
   check("last page has no continuation", pages > 1, true);
   check("reached the tail", assembled.includes("반도체 부문."), true);
+
+  console.log("\n--- mode=find ---");
+  const found = await call({ rcept_no: "20240312000736", mode: "find", query: "반도체" });
+  console.log(found.text.split("\n").slice(0, 8).join("\n"));
+  check("no error", found.isError, false);
+  check("reports hit count", /검색 결과: \d+건 \/ \d+개 섹션/.test(found.text), true);
+  check("names the section", found.text.includes("1. 사업의 개요"), true);
+  check("gives a runnable next call", found.text.includes('mode="section", section="'), true);
+  check("groups by section, not a flat list", /— \d+건/.test(found.text), true);
+
+  console.log("\n--- find hit offset actually lands on the match ---");
+  const hit = found.text.match(/section="(\d+)", offset=(\d+)/)!;
+  const landed = await call({
+    rcept_no: "20240312000736", mode: "section",
+    section: hit[1], offset: Number(hit[2]), max_chars: 1000,
+  });
+  const bodyStart = landed.text.split("\n\n")[2] ?? "";
+  check("match is at the top of the window", bodyStart.trimStart().startsWith("반도체"), true);
+
+  console.log("\n--- find scoped to a section ---");
+  const scoped = await call({ rcept_no: "20240312000736", mode: "find", query: "설립", section: "회사의 개요" });
+  check("scope reported", scoped.text.includes("범위: "), true);
+  check("finds within scope", scoped.text.includes("1969년"), true);
+
+  const scopedMiss = await call({ rcept_no: "20240312000736", mode: "find", query: "반도체", section: "2. 회사의 연혁" });
+  check("scope excludes other sections", scopedMiss.text.includes("검색 결과 없음"), true);
+
+  console.log("\n--- find with no matches ---");
+  const none = await call({ rcept_no: "20240312000736", mode: "find", query: "존재하지않는키워드" });
+  check("says so plainly", none.text.includes("검색 결과 없음"), true);
+  check("not an error", none.isError, false);
+
+  console.log("\n--- find in an attachment ---");
+  const attFind = await call({ rcept_no: "20240312000736", mode: "find", query: "적정의견", attachment: "감사보고서" });
+  check("searches the attachment", attFind.text.includes("적정의견"), true);
+  check("next call keeps attachment", attFind.text.includes('attachment="감사보고서"'), true);
+
+  console.log("\n--- find without query ---");
+  const noQuery = await call({ rcept_no: "20240312000736", mode: "find" });
+  check("isError", noQuery.isError, true);
 
   console.log("\n--- offset past the end ---");
   const beyond = await call({

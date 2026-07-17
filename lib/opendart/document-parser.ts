@@ -257,6 +257,114 @@ export function getSectionText(doc: ParsedDocument, section: DocSection): string
   return extractText(doc.raw.slice(section.start, section.end));
 }
 
+/**
+ * The text belonging to a section itself, excluding nested subsections: from
+ * its title to the next title of any depth. These ranges partition the
+ * document, so scanning them visits every character exactly once.
+ *
+ * This is a prefix of getSectionText(), so an offset found here is also a valid
+ * offset into the full section.
+ */
+function ownTextRange(doc: ParsedDocument, i: number): [number, number] {
+  const s = doc.sections[i];
+  const nextTitleStart = doc.sections[i + 1]?.titleStart ?? s.end;
+  return [s.start, Math.min(s.end, nextTitleStart)];
+}
+
+/**
+ * Hits grouped by section rather than listed flat.
+ *
+ * A flat list is worse than useless here: "충당부채" hits 비나텍's 연결 주석 19
+ * times, which would fill any reasonable cap and hide the 별도 주석 (17 more
+ * hits) entirely. Grouping guarantees every section that mentions the keyword
+ * is reported.
+ */
+export interface FindGroup {
+  sectionIndex: number;
+  sectionTitle: string;
+  count: number;
+  /** Offsets within that section's text — pass one straight back as offset */
+  offsets: number[];
+  /** Context around the first hit */
+  snippet: string;
+}
+
+export interface FindResult {
+  groups: FindGroup[];
+  totalHits: number;
+  /** Sections searched — the whole document, or one subtree */
+  scope: string;
+}
+
+const SNIPPET_BEFORE = 60;
+const SNIPPET_AFTER = 140;
+
+/**
+ * Locate a keyword across a filing and report where to read it.
+ *
+ * Needed because filings disagree on structure: when notes live in one untitled
+ * blob, findSection can't reach them and paging by hand through 74k chars is
+ * not a plan.
+ */
+export function findInDocument(
+  doc: ParsedDocument,
+  query: string,
+  maxGroups: number,
+  within?: DocSection
+): FindResult {
+  const q = query.trim().toLowerCase();
+  const groups: FindGroup[] = [];
+  let totalHits = 0;
+
+  for (let i = 0; i < doc.sections.length; i++) {
+    const s = doc.sections[i];
+
+    if (within && (s.titleStart < within.titleStart || s.end > within.end)) continue;
+
+    const [from, to] = ownTextRange(doc, i);
+    if (to <= from) continue;
+
+    const text = extractText(doc.raw.slice(from, to));
+    const haystack = text.toLowerCase();
+
+    const offsets: number[] = [];
+    let snippet = "";
+
+    let idx = haystack.indexOf(q);
+    while (idx !== -1) {
+      totalHits++;
+      if (offsets.length === 0) {
+        snippet = text
+          .slice(Math.max(0, idx - SNIPPET_BEFORE), idx + q.length + SNIPPET_AFTER)
+          .replace(/\s+/g, " ")
+          .trim();
+      }
+      if (offsets.length < 20) offsets.push(idx);
+      idx = haystack.indexOf(q, idx + q.length);
+    }
+
+    if (offsets.length > 0) {
+      groups.push({
+        sectionIndex: s.index,
+        sectionTitle: s.title,
+        count: offsets.length,
+        offsets,
+        snippet,
+      });
+    }
+  }
+
+  // Densest section first — that's usually the note itself rather than a
+  // passing mention in a statement line item.
+  groups.sort((a, b) => b.count - a.count || a.sectionIndex - b.sectionIndex);
+
+  return {
+    groups: groups.slice(0, maxGroups),
+    totalHits,
+    scope: within ? `${within.index}. ${within.title}` : "전체 문서",
+  };
+}
+
 export interface Truncated {
   text: string;
   truncated: boolean;

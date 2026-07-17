@@ -11,14 +11,18 @@ import {
 } from "@/lib/opendart/document-cache";
 import {
   findSection,
+  findInDocument,
   getSectionText,
   extractText,
   paginate,
+  truncate,
+  type FindResult,
   type ParsedDocument,
 } from "@/lib/opendart/document-parser";
 
 const DEFAULT_MAX_CHARS = 20000;
 const HARD_MAX_CHARS = 50000;
+const MAX_FIND_GROUPS = 15;
 
 function header(entry: BundleEntry, doc: ParsedDocument, rceptNo: string): string {
   const name = entry.docName || doc.docName || "공시 원문";
@@ -82,6 +86,56 @@ function renderToc(bundle: DocumentBundle, entry: BundleEntry, doc: ParsedDocume
 
 const ko = (n: number) => n.toLocaleString("ko-KR");
 
+/** Each hit doubles as the next call: section + offset to read it. */
+function renderFind(
+  headerText: string,
+  query: string,
+  result: FindResult,
+  attachment?: string
+): string {
+  if (result.totalHits === 0) {
+    return [
+      headerText,
+      "",
+      `"${query}" 검색 결과 없음 (범위: ${result.scope}) / No matches.`,
+      "",
+      '> 표기가 다를 수 있습니다. 더 짧은 키워드로 다시 시도하거나, mode="toc"로 목차를 확인하세요.',
+    ].join("\n");
+  }
+
+  const attachmentArg = attachment ? `, attachment="${attachment}"` : "";
+
+  const parts = [
+    headerText,
+    "",
+    `"${query}" 검색 결과: ${ko(result.totalHits)}건 / ${result.groups.length}개 섹션 — 범위: ${result.scope}`,
+    "(많이 언급된 섹션 순)",
+    "",
+  ];
+
+  for (const [i, g] of result.groups.entries()) {
+    const first = g.offsets[0];
+    parts.push(
+      `**${i + 1}. #${g.sectionIndex} ${g.sectionTitle}** — ${ko(g.count)}건`,
+      `   …${g.snippet}…`,
+      `   → mode="section", section="${g.sectionIndex}", offset=${first}${attachmentArg}`
+    );
+
+    const others = g.offsets.slice(1, 5);
+    if (others.length > 0) {
+      const more = g.count - 1 - others.length;
+      parts.push(
+        `   다른 위치: offset=${others.join(" / ")}${more > 0 ? ` (외 ${ko(more)}건)` : ""}`
+      );
+    }
+    parts.push("");
+  }
+
+  parts.push("> 위 → 줄을 그대로 호출하면 해당 대목부터 읽습니다.");
+
+  return parts.join("\n");
+}
+
 /**
  * Render one window of a section's text, keeping the header visible and always
  * saying where the window sits so the rest stays reachable.
@@ -128,36 +182,42 @@ export function registerDocumentTools(server: McpServer) {
       description: `Read the original text of a DART filing (사업보고서, 주요사항보고서, etc.) by receipt number.
 Get rcept_no from opendart_search_disclosure first.
 
-Filings are large (often several MB), so this tool is paged by section:
+Filings are large (often several MB), so this tool is paged:
   1. mode="toc" (default) — list section titles with their sizes. START HERE.
-  2. mode="section" — return one section's text, chosen by TOC number or title keyword.
-  3. mode="full" — the whole document as text. Only for short filings; long ones get truncated.
+  2. mode="find" — locate a keyword anywhere in the filing. Each hit reports the
+     section and offset to read it, so the result is the next call to make.
+  3. mode="section" — return one section's text, by TOC number or title keyword.
+  4. mode="full" — the whole document as text. Only for short filings.
 
 A filing's archive holds the report plus its attachments (감사보고서, 연결감사보고서 …).
 mode="toc" lists them; use attachment to read one.
 
-Not every filing splits its notes into titled sections. Large caps tag each note
-separately ("15. 충당부채"); smaller ones put all of them under a single title as
-plain paragraphs. When a section is too long for one response, it is truncated
-and reports the offset to continue from — pass it back as offset to read on.
-Repeat until nothing is truncated; that is the only way to reach the tail of an
-untitled notes blob.
+Filings disagree on how notes are structured. Large caps title each note
+("15. 충당부채"), so mode="section" reaches it. Smaller ones put every note under
+one title as plain paragraphs — there mode="section" with a note name finds
+NOTHING even though the text is present. Use mode="find" whenever a keyword
+isn't a section title in the TOC; do not page through with offset looking for it.
+
+When a response is truncated it reports the offset to continue from; pass it back
+as offset to read on.
 
 Output is plain text with XML markup stripped; tables render as pipe-separated rows.
 Responses are capped at max_chars and clearly marked when truncated.
 
 Args:
   - rcept_no: 14-digit receipt number (접수번호, e.g. "20240312000736")
-  - mode (optional): "toc" | "section" | "full" (default: "toc")
-  - section (required when mode="section"): TOC number (e.g. "3") or title keyword (e.g. "사업의 내용")
+  - mode (optional): "toc" | "find" | "section" | "full" (default: "toc")
+  - section (required when mode="section"): TOC number (e.g. "3") or title keyword (e.g. "사업의 내용"). Optional with mode="find" to limit the search.
+  - query (required when mode="find"): keyword to locate, e.g. "충당부채"
   - attachment (optional): which document in the filing — number (e.g. "2") or name (e.g. "감사보고서"). Defaults to the main report.
   - offset (optional): Start this many characters into the text (default: 0). Use the offset a truncated response reports.
   - max_chars (optional): Response character cap (default: ${DEFAULT_MAX_CHARS}, max: ${HARD_MAX_CHARS})
   - api_key (optional): Override the server's OpenDART API key`,
       inputSchema: {
         rcept_no: z.string().regex(/^\d{14}$/).describe("14-digit receipt number (접수번호)"),
-        mode: z.enum(["toc", "section", "full"]).default("toc").describe("toc: section list, section: one section, full: whole document"),
-        section: z.string().optional().describe('TOC number or title keyword, e.g. "3" or "사업의 내용"'),
+        mode: z.enum(["toc", "section", "full", "find"]).default("toc").describe("toc: section list, find: locate a keyword, section: one section, full: whole document"),
+        section: z.string().optional().describe('TOC number or title keyword, e.g. "3" or "사업의 내용". With mode="find", narrows the search to that section.'),
+        query: z.string().optional().describe('Keyword to search for (required when mode="find"), e.g. "충당부채"'),
         attachment: z.string().optional().describe('Document within the filing: number or name, e.g. "2" or "감사보고서". Omit for the main report.'),
         offset: z.number().int().min(0).default(0).describe("Start reading this many characters in. Use the offset the previous truncated response reported."),
         max_chars: z.number().int().min(1000).max(HARD_MAX_CHARS).default(DEFAULT_MAX_CHARS).describe("Max characters to return"),
@@ -170,7 +230,7 @@ Args:
         openWorldHint: true,
       },
     },
-    async ({ rcept_no, mode, section, attachment, offset, max_chars, api_key }) => {
+    async ({ rcept_no, mode, section, query, attachment, offset, max_chars, api_key }) => {
       try {
         const key = resolveApiKey(api_key);
 
@@ -179,6 +239,16 @@ Args:
             content: [{
               type: "text" as const,
               text: 'mode="section" requires the section argument (TOC number or title keyword). Call mode="toc" first to see the options. / mode="section"에는 section 인자가 필요합니다. 먼저 mode="toc"로 목차를 확인하세요.',
+            }],
+            isError: true,
+          };
+        }
+
+        if (mode === "find" && !query?.trim()) {
+          return {
+            content: [{
+              type: "text" as const,
+              text: 'mode="find" requires the query argument (keyword to search for). / mode="find"에는 query 인자(찾을 키워드)가 필요합니다.',
             }],
             isError: true,
           };
@@ -210,6 +280,26 @@ Args:
 
         if (mode === "toc") {
           return { content: [{ type: "text" as const, text: renderToc(bundle, entry, doc) }] };
+        }
+
+        if (mode === "find") {
+          // section is optional here: it narrows the search to one subtree
+          const within = section?.trim() ? findSection(doc, section) ?? undefined : undefined;
+          if (section?.trim() && !within) {
+            return {
+              content: [{
+                type: "text" as const,
+                text: `검색 범위로 지정한 섹션을 찾지 못했습니다: "${section}" / Section not found. mode="toc"로 목차를 확인하세요.`,
+              }],
+              isError: true,
+            };
+          }
+
+          const result = findInDocument(doc, query!, MAX_FIND_GROUPS, within);
+          const rendered = renderFind(header(entry, doc, rcept_no), query!, result, attachment);
+          return {
+            content: [{ type: "text" as const, text: truncate(rendered, max_chars).text }],
+          };
         }
 
         if (mode === "full") {

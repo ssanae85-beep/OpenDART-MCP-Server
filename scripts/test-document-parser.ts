@@ -6,6 +6,7 @@
 import {
   parseDocument,
   findSection,
+  findInDocument,
   getSectionText,
   extractText,
   truncate,
@@ -188,6 +189,39 @@ check("sibling depth is 1", summary.depth, 1);
 check("summary body is its own", getSectionText(lib, summary), "요약재무정보 본문.");
 check("summary does not swallow the next section", getSectionText(lib, summary).includes("연결재무제표 본문"), false);
 check("next section still readable", getSectionText(lib, consolidated), "연결재무제표 본문.");
+
+// A flat hit list lets one dense section crowd out every other one: "충당부채"
+// hits 비나텍's 연결 주석 19 times and its 별도 주석 17 more, so a 15-hit cap
+// would never mention the second. Groups must cover every matching section.
+console.log("\n--- find groups by section ---");
+const FIND_SAMPLE = `<?xml version="1.0" encoding="utf-8"?>
+<DOCUMENT><BODY><LIBRARY>
+<SECTION-1><TITLE>가. 첫 섹션</TITLE><P>충당부채 충당부채 충당부채 충당부채</P></SECTION-1>
+<SECTION-1><TITLE>나. 둘째 섹션</TITLE><P>여기에도 충당부채 한 번.</P></SECTION-1>
+<SECTION-1><TITLE>다. 무관한 섹션</TITLE><P>관련 없는 내용.</P></SECTION-1>
+</LIBRARY></BODY></DOCUMENT>`;
+
+const fdoc = parseDocument(FIND_SAMPLE);
+const fr = findInDocument(fdoc, "충당부채", 15);
+console.log(`  총 ${fr.totalHits}건 / ${fr.groups.length}개 섹션`);
+for (const g of fr.groups) console.log(`    #${g.sectionIndex} ${g.sectionTitle} — ${g.count}건 @${g.offsets.join(",")}`);
+
+check("counts every hit", fr.totalHits, 5);
+check("one group per matching section", fr.groups.length, 2);
+check("dense section ranks first", fr.groups[0].sectionTitle, "가. 첫 섹션");
+check("sparse section still reported", fr.groups[1].sectionTitle, "나. 둘째 섹션");
+check("non-matching section absent", fr.groups.some((g) => g.sectionTitle.includes("무관")), false);
+check("snippet carries context", fr.groups[1].snippet.includes("여기에도 충당부채 한 번"), true);
+
+// The offset must land on the match inside the *full* section text
+const g2 = fr.groups[1];
+const sec2 = fdoc.sections.find((s) => s.index === g2.sectionIndex)!;
+check("offset lands on the match", getSectionText(fdoc, sec2).slice(g2.offsets[0]).startsWith("충당부채"), true);
+
+console.log("\n--- find scoped to a subtree ---");
+const scoped = findInDocument(fdoc, "충당부채", 15, findSection(fdoc, "나. 둘째 섹션")!);
+check("scope limits results", scoped.groups.length, 1);
+check("scope label", scoped.scope, "2. 나. 둘째 섹션");
 
 console.log("\n--- misc ---");
 check("no match -> null", findSection(doc, "존재하지않는섹션"), null);
