@@ -16,12 +16,18 @@ import { getBinary } from "../lib/opendart/client";
 
 /**
  * The registry is a 3.4MB ZIP that DART builds on demand, and CI runners sit
- * outside Korea: the weekly job died on a bare 120s fetch with no retry. Give it
- * room and let the client's backoff handle a slow or flaky response.
- * Worst case ~16 min, bounded by timeout-minutes on the workflow step.
+ * outside Korea. Measured from a GitHub runner: 210.9s (~16KB/s), which is why
+ * the old bare 120s fetch could never have succeeded there.
+ *
+ * The timeout is set at roughly 2x that measurement, not just above it. Retries
+ * don't help when a run is slow rather than flaky: if DART's baseline drifts
+ * past the ceiling, every attempt times out and the job fails outright. Local
+ * runs finish in seconds and are unaffected either way.
+ *
+ * Worst case 3 x 420s ~= 21 min, inside the workflow step's timeout-minutes: 25.
  */
-const DOWNLOAD_TIMEOUT = 240_000;
-const DOWNLOAD_RETRIES = 3;
+const DOWNLOAD_TIMEOUT = 420_000;
+const DOWNLOAD_RETRIES = 2;
 
 // Load .env if present
 const envPath = join(process.cwd(), ".env");

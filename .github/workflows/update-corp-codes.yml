@@ -45,10 +45,11 @@ jobs:
       # shrink, or codes that lost their leading zeros, and exits non-zero
       # without touching the file. A failure here means nothing was committed.
       #
-      # The download retries with backoff (DART is slow to reach from a runner
-      # outside Korea), so allow for that without letting a hang run for hours.
+      # The download alone measured 210.9s from a runner; the script allows 420s
+      # per attempt and up to 3 attempts. This bounds a hang without cutting a
+      # legitimately slow run short.
       - name: Rebuild corp-codes.json
-        timeout-minutes: 20
+        timeout-minutes: 25
         env:
           OPENDART_API_KEY: ${{ secrets.OPENDART_API_KEY }}
         run: npm run update-corp-codes
@@ -80,4 +81,6 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data/corp-codes.json
           git commit -m "chore: update corp codes ($(date -u +%Y-%m-%d))"
-          git push
+          # Explicit refspec: a bare `git push` fails on a detached HEAD, and
+          # this path only ever runs on a week when the data actually changed.
+          git push origin "HEAD:${GITHUB_REF_NAME}"
