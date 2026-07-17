@@ -37,6 +37,30 @@ const SAMPLE = `<?xml version="1.0" encoding="euc-kr"?>
 </SECTION-1>
 </PART>
 <PART ATOC="Y">
+<TITLE ATOC="Y">III. 재무에 관한 사항</TITLE>
+<SECTION-1>
+<TITLE ATOC="Y">15. 충당부채</TITLE>
+<TABLE-GROUP ACLASS="COVER" ADELETETABLE="N">
+<TABLE ACLASS="NORMAL" BORDER="1">
+<THEAD>
+<TR><TH ENG="Warranty">판매보증</TH><TH ENG="Disclosed Amount">공시금액</TH></TR>
+</THEAD>
+<TBODY>
+<TR>
+<TE ENG="provisions at beginning of period" VALIGN="MIDDLE">기초 충당부채</TE>
+<TE ACODE="ifrs-full_OtherProvisions" ACONTEXT="PFY2024eFY" ADECIMAL="-6" ANEGATED="N" ALIGN="RIGHT">2,734,501</TE>
+</TR>
+<TR>
+<TD CLASS="NORMAL" ENG="Fiscal year">사업연도</TD>
+<TU CLASS="NORMAL" AUNIT="PERIODFROM" AUNITVALUE="20250101">2025년 01월 01일</TU>
+</TR>
+<TR><TE VALIGN="MIDDLE">　</TE><TE ALIGN="RIGHT">1,234</TE></TR>
+</TBODY>
+</TABLE>
+</TABLE-GROUP>
+</SECTION-1>
+</PART>
+<PART ATOC="Y">
 <TITLE ATOC="Y">II. 사업의 내용</TITLE>
 <SECTION-1>
 <TITLE ATOC="Y">1. 사업의 개요</TITLE>
@@ -72,19 +96,28 @@ console.log("\n--- TOC ---");
 for (const s of doc.sections) {
   console.log(`  ${"  ".repeat(s.depth)}${s.index}. ${s.title}  [depth=${s.depth}]`);
 }
-check("section count", doc.sections.length, 6);
+check("section count", doc.sections.length, 8);
 check(
   "titles",
   doc.sections.map((s) => s.title),
-  ["I. 회사의 개요", "1. 회사의 개요", "2. 회사의 연혁", "II. 사업의 내용", "1. 사업의 개요", "2. 주요 제품"]
+  [
+    "I. 회사의 개요",
+    "1. 회사의 개요",
+    "2. 회사의 연혁",
+    "III. 재무에 관한 사항",
+    "15. 충당부채",
+    "II. 사업의 내용",
+    "1. 사업의 개요",
+    "2. 주요 제품",
+  ]
 );
 check("depths differ parent<child", doc.sections[0].depth < doc.sections[1].depth, true);
 check("top-level depth normalized to 0", doc.sections[0].depth, 0);
 check("child depth", doc.sections[1].depth, 1);
 
 console.log("\n--- find by index ---");
-const byIndex = findSection(doc, "5");
-check("index 5 title", byIndex?.title, "1. 사업의 개요");
+const byIndex = findSection(doc, "7");
+check("index 7 title", byIndex?.title, "1. 사업의 개요");
 console.log(getSectionText(doc, byIndex!));
 check("entity decode &lt;DS&gt;", getSectionText(doc, byIndex!).includes("반도체 <DS> 부문"), true);
 check("comment stripped", getSectionText(doc, byIndex!).includes("internal comment"), false);
@@ -106,8 +139,18 @@ console.log(tableText);
 check("table row pipes", tableText.includes("연도 | 내용"), true);
 check("table data row", tableText.includes("1969 | 설립"), true);
 
+console.log("\n--- XBRL note table (TE/TU cells, TABLE-GROUP wrapper) ---");
+const note = findSection(doc, "충당부채");
+const noteText = getSectionText(doc, note!);
+console.log(noteText);
+check("TH header row", noteText.includes("판매보증 | 공시금액"), true);
+check("TE value cell (the reported bug)", noteText.includes("기초 충당부채 | 2,734,501"), true);
+check("TU value cell", noteText.includes("사업연도 | 2025년 01월 01일"), true);
+check("empty TE keeps column position", noteText.includes("| 1,234"), true);
+check("TABLE-GROUP not mistaken for a table", noteText.includes("TABLE-GROUP"), false);
+
 console.log("\n--- keyword case/space insensitivity ---");
-check("spaces ignored", findSection(doc, "주요제품")?.index, 6);
+check("spaces ignored", findSection(doc, "주요제품")?.index, 8);
 
 console.log("\n--- misc ---");
 check("no match -> null", findSection(doc, "존재하지않는섹션"), null);

@@ -69,9 +69,19 @@ function inlineText(fragment: string): string {
     .trim();
 }
 
-const TABLE_RE = /<TABLE\b[^>]*>([\s\S]*?)<\/TABLE\s*>/gi;
-const ROW_RE = /<TR\b[^>]*>([\s\S]*?)<\/TR\s*>/gi;
-const CELL_RE = /<T[DH]\b[^>]*>([\s\S]*?)<\/T[DH]\s*>/gi;
+/**
+ * DART table cells are not just TD/TH:
+ *   TD  static cell            TH  header cell
+ *   TE  XBRL-tagged value      TU  form field value
+ * The financial statement notes are almost entirely TE, and cover pages use TU,
+ * so ignoring them drops every number while leaving the labels behind.
+ *
+ * The (?![\w-]) guards stop <TABLE> from matching <TABLE-GROUP>, which wraps
+ * tables and would otherwise be parsed as one.
+ */
+const TABLE_RE = /<TABLE(?![\w-])[^>]*>([\s\S]*?)<\/TABLE\s*>/gi;
+const ROW_RE = /<TR(?![\w-])[^>]*>([\s\S]*?)<\/TR\s*>/gi;
+const CELL_RE = /<(T[DHEU])(?![\w-])[^>]*>([\s\S]*?)<\/\1\s*>/gi;
 
 /**
  * Render a table as pipe-separated rows.
@@ -89,7 +99,7 @@ function renderTable(inner: string): string {
     CELL_RE.lastIndex = 0;
     let cellMatch: RegExpExecArray | null;
     while ((cellMatch = CELL_RE.exec(rowMatch[1])) !== null) {
-      cells.push(inlineText(cellMatch[1]));
+      cells.push(inlineText(cellMatch[2]));
     }
 
     if (cells.length > 0) rows.push(cells.join(" | "));
