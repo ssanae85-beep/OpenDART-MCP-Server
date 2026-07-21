@@ -27,6 +27,8 @@ export interface BundleEntry {
   docName: string;
   chars: number;
   raw: string;
+  /** U+FFFD ratio from decoding; > UNREADABLE_THRESHOLD means text is unreliable */
+  garbleRatio: number;
   /** Populated on first use — parsing every attachment up front wastes the time budget */
   parsed?: ParsedDocument;
 }
@@ -158,6 +160,7 @@ export async function fetchDocumentBundle(
       docName: readDocName(f.text) || f.name,
       chars: f.text.length,
       raw: f.text,
+      garbleRatio: f.garbleRatio,
     })),
   };
 
