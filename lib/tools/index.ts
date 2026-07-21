@@ -1,6 +1,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { CallToolRequestSchema, type CallToolRequest } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { setSessionApiKey, getSessionApiKey } from "@/lib/opendart/client";
+import { TOOL_ALLOWED_PARAMS, checkParams } from "@/lib/opendart/guard";
 import { registerCompanyTools } from "./company";
 import { registerDocumentTools } from "./document";
 import { registerFinancialTools } from "./financial";
@@ -54,6 +56,47 @@ function registerConfigTools(server: McpServer) {
   );
 }
 
+/**
+ * Reject unknown parameters before the SDK strips them.
+ *
+ * McpServer validates each call with a non-strict schema, so a key the schema
+ * doesn't know is dropped and the handler runs on defaulted arguments with no
+ * error — the silent misfire behind the degeneration incident. The raw
+ * arguments are only visible before that validation, so we wrap the low-level
+ * tools/call handler: check the original keys, reject with a "did you mean"
+ * hint, and otherwise delegate to the SDK's own handler unchanged (its type
+ * validation still runs).
+ */
+function installParamGuard(server: McpServer) {
+  const low = (server as unknown as {
+    server: {
+      _requestHandlers: Map<string, (req: CallToolRequest, extra: unknown) => Promise<unknown>>;
+      setRequestHandler: (schema: typeof CallToolRequestSchema, handler: (req: CallToolRequest, extra: unknown) => Promise<unknown>) => void;
+    };
+  }).server;
+
+  const inner = low._requestHandlers.get("tools/call");
+  if (!inner) {
+    // Shouldn't happen once tools are registered; fail loud rather than run unguarded.
+    throw new Error("installParamGuard: no tools/call handler to wrap");
+  }
+
+  low.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
+    const toolName = request.params.name;
+    const rawArgs = request.params.arguments as Record<string, unknown> | undefined;
+
+    const problem = checkParams(toolName, rawArgs, TOOL_ALLOWED_PARAMS[toolName]);
+    if (problem) {
+      return {
+        content: [{ type: "text" as const, text: problem.message }],
+        isError: true,
+      };
+    }
+
+    return inner(request, extra);
+  });
+}
+
 export function registerAllTools(server: McpServer) {
   registerConfigTools(server);         // API key configuration (first)
   registerWorkflowTools(server);       // Workflow tools (most useful)
@@ -64,4 +107,7 @@ export function registerAllTools(server: McpServer) {
   registerShareholdingTools(server);   // Shareholding disclosures
   registerMajorEventTools(server);     // Major corporate events
   registerSecuritiesRegTools(server);  // Securities registration statements
+
+  // After every tool is registered, so the wrapped handler exists.
+  installParamGuard(server);
 }
