@@ -19,15 +19,72 @@ import {
   type FindResult,
   type ParsedDocument,
 } from "@/lib/opendart/document-parser";
+import { UNREADABLE_THRESHOLD } from "@/lib/opendart/zip";
 
 const DEFAULT_MAX_CHARS = 20000;
 const HARD_MAX_CHARS = 50000;
 const MAX_FIND_GROUPS = 15;
 
+/**
+ * Absolute server-side ceiling, independent of the client's max_chars.
+ *
+ * max_chars is already capped at HARD_MAX_CHARS by the schema, but the schema
+ * can be bypassed and some paths (find, warnings) don't run through max_chars at
+ * all. This is the last line: every response is truncated to this before it
+ * leaves, so no reply can blow up the context regardless of how it was built.
+ */
+const MAX_RESPONSE_CHARS = 50000;
+
+/** Clamp the client value and never exceed the server ceiling. Exported for tests. */
+export function effectiveMaxChars(requested: number): number {
+  return Math.min(requested, MAX_RESPONSE_CHARS);
+}
+
+export { MAX_RESPONSE_CHARS };
+
+/** Final guard applied to every outgoing response, on every path. Exported for tests. */
+export function capResponse(text: string): string {
+  if (text.length <= MAX_RESPONSE_CHARS) return text;
+  return (
+    text.slice(0, MAX_RESPONSE_CHARS) +
+    `\n\n---\n⚠️ 응답이 서버 상한(${MAX_RESPONSE_CHARS.toLocaleString("ko-KR")}자)에서 잘렸습니다. ` +
+    `mode="section"/offset으로 나눠서 조회하세요. / Response truncated at the server limit.`
+  );
+}
+
+function ok(text: string) {
+  return { content: [{ type: "text" as const, text: capResponse(text) }] };
+}
+
+function err(text: string) {
+  return { content: [{ type: "text" as const, text: capResponse(text) }], isError: true };
+}
+
 function header(entry: BundleEntry, doc: ParsedDocument, rceptNo: string): string {
   const name = entry.docName || doc.docName || "공시 원문";
   const company = doc.companyName ? ` — ${doc.companyName}` : "";
   return `## ${name}${company}\n접수번호: ${rceptNo}`;
+}
+
+/**
+ * A short warning instead of the garbled body when text extraction failed.
+ *
+ * Returned for filings whose fallback decode still can't be read (mostly some
+ * pre-2020 EUC-KR reports): flooding the context with U+FFFD is exactly the kind
+ * of bloat that raised the collapse risk, so we spend a few tokens saying so
+ * rather than thousands emitting it.
+ */
+function garbleWarning(entry: BundleEntry, rceptNo: string): string {
+  return [
+    `## ${entry.docName || "공시 원문"}`,
+    `접수번호: ${rceptNo}`,
+    "",
+    `⚠️ 이 문서는 인코딩 문제로 텍스트 추출이 불가능합니다 (깨진 문자 비율 ${Math.round(entry.garbleRatio * 100)}%).`,
+    "This document could not be decoded to readable text (encoding issue).",
+    "",
+    "구형(2020년 이전) DART 보고서에서 종종 발생합니다.",
+    "원문 확인이 필요하면 DART 웹사이트에서 직접 열어보세요: https://dart.fss.or.kr",
+  ].join("\n");
 }
 
 /** List every document in the filing's ZIP, marking the one being read. */
@@ -234,24 +291,14 @@ Args:
       try {
         const key = resolveApiKey(api_key);
 
+        const cap = effectiveMaxChars(max_chars);
+
         if (mode === "section" && !section?.trim()) {
-          return {
-            content: [{
-              type: "text" as const,
-              text: 'mode="section" requires the section argument (TOC number or title keyword). Call mode="toc" first to see the options. / mode="section"에는 section 인자가 필요합니다. 먼저 mode="toc"로 목차를 확인하세요.',
-            }],
-            isError: true,
-          };
+          return err('mode="section" requires the section argument (TOC number or title keyword). Call mode="toc" first to see the options. / mode="section"에는 section 인자가 필요합니다. 먼저 mode="toc"로 목차를 확인하세요.');
         }
 
         if (mode === "find" && !query?.trim()) {
-          return {
-            content: [{
-              type: "text" as const,
-              text: 'mode="find" requires the query argument (keyword to search for). / mode="find"에는 query 인자(찾을 키워드)가 필요합니다.',
-            }],
-            isError: true,
-          };
+          return err('mode="find" requires the query argument (keyword to search for). / mode="find"에는 query 인자(찾을 키워드)가 필요합니다.');
         }
 
         const bundle = await fetchDocumentBundle(rcept_no, key);
@@ -263,43 +310,36 @@ Args:
             const available = bundle.entries
               .map((e) => `  ${e.index}. ${e.docName}`)
               .join("\n");
-            return {
-              content: [{
-                type: "text" as const,
-                text: `문서를 찾지 못했습니다: "${attachment}" / Attachment not found.\n\n이 접수번호의 문서 (available):\n${available}`,
-              }],
-              isError: true,
-            };
+            return err(`문서를 찾지 못했습니다: "${attachment}" / Attachment not found.\n\n이 접수번호의 문서 (available):\n${available}`);
           }
           entry = found;
         } else {
           entry = bundle.entries[0];
         }
 
+        // Decode failed even after the encoding fallback: warn instead of
+        // streaming a wall of U+FFFD. TOC still works — titles are ASCII-ish
+        // structure — so only the text-bearing modes are short-circuited.
+        if (entry.garbleRatio > UNREADABLE_THRESHOLD && mode !== "toc") {
+          return ok(garbleWarning(entry, rcept_no));
+        }
+
         const doc = getParsed(entry);
 
         if (mode === "toc") {
-          return { content: [{ type: "text" as const, text: renderToc(bundle, entry, doc) }] };
+          return ok(renderToc(bundle, entry, doc));
         }
 
         if (mode === "find") {
           // section is optional here: it narrows the search to one subtree
           const within = section?.trim() ? findSection(doc, section) ?? undefined : undefined;
           if (section?.trim() && !within) {
-            return {
-              content: [{
-                type: "text" as const,
-                text: `검색 범위로 지정한 섹션을 찾지 못했습니다: "${section}" / Section not found. mode="toc"로 목차를 확인하세요.`,
-              }],
-              isError: true,
-            };
+            return err(`검색 범위로 지정한 섹션을 찾지 못했습니다: "${section}" / Section not found. mode="toc"로 목차를 확인하세요.`);
           }
 
           const result = findInDocument(doc, query!, MAX_FIND_GROUPS, within);
           const rendered = renderFind(header(entry, doc, rcept_no), query!, result, attachment);
-          return {
-            content: [{ type: "text" as const, text: truncate(rendered, max_chars).text }],
-          };
+          return ok(truncate(rendered, cap).text);
         }
 
         if (mode === "full") {
@@ -307,10 +347,10 @@ Args:
             header(entry, doc, rcept_no),
             extractText(doc.raw),
             offset,
-            max_chars,
+            cap,
             '> 또는 mode="toc"로 목차를 확인한 뒤 mode="section"으로 필요한 섹션만 조회하세요.'
           );
-          return { content: [{ type: "text" as const, text }] };
+          return ok(text);
         }
 
         const target = findSection(doc, section!);
@@ -319,25 +359,19 @@ Args:
             .slice(0, 30)
             .map((s) => `  ${s.index}. ${s.title}`)
             .join("\n");
-          return {
-            content: [{
-              type: "text" as const,
-              text: `섹션을 찾지 못했습니다: "${section}" / Section not found.\n\n사용 가능한 섹션 (available):\n${available || "  (none)"}`,
-            }],
-            isError: true,
-          };
+          return err(`섹션을 찾지 못했습니다: "${section}" / Section not found.\n\n사용 가능한 섹션 (available):\n${available || "  (none)"}`);
         }
 
         const text = renderBody(
           `${header(entry, doc, rcept_no)}\n\n### ${target.index}. ${target.title}`,
           getSectionText(doc, target),
           offset,
-          max_chars,
+          cap,
           `> 또는 하위 섹션을 개별 조회하거나 max_chars를 늘리세요 (최대 ${ko(HARD_MAX_CHARS)}).`
         );
-        return { content: [{ type: "text" as const, text }] };
-      } catch (err) {
-        return { content: [{ type: "text" as const, text: formatApiError(err) }], isError: true };
+        return ok(text);
+      } catch (error) {
+        return err(formatApiError(error));
       }
     }
   );
