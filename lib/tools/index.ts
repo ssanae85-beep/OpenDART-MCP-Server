@@ -2,7 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { CallToolRequestSchema, type CallToolRequest } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { setSessionApiKey, getSessionApiKey } from "@/lib/opendart/client";
-import { TOOL_ALLOWED_PARAMS, checkParams } from "@/lib/opendart/guard";
+import { buildAllowlist, checkParams } from "@/lib/opendart/guard";
 import { registerCompanyTools } from "./company";
 import { registerDocumentTools } from "./document";
 import { registerFinancialTools } from "./financial";
@@ -57,17 +57,26 @@ function registerConfigTools(server: McpServer) {
 }
 
 /**
- * Reject unknown parameters before the SDK strips them.
+ * Reject unknown parameters before the SDK strips them — for every tool.
  *
  * McpServer validates each call with a non-strict schema, so a key the schema
  * doesn't know is dropped and the handler runs on defaulted arguments with no
- * error — the silent misfire behind the degeneration incident. The raw
- * arguments are only visible before that validation, so we wrap the low-level
- * tools/call handler: check the original keys, reject with a "did you mean"
- * hint, and otherwise delegate to the SDK's own handler unchanged (its type
+ * error — the silent misfire behind the degeneration incident. That behavior is
+ * shared by all tools (business_year→bsns_year, report_code→reprt_code, etc.),
+ * so the guard covers all of them, not just get_document.
+ *
+ * The allowlist is derived from each tool's own registered Zod schema, so it
+ * can't drift from what the SDK validates and new tools are covered for free.
+ * The raw arguments are only visible before validation, so we wrap the
+ * low-level tools/call handler: check the original keys, reject with a "did you
+ * mean" hint, and otherwise delegate to the SDK's handler unchanged (its type
  * validation still runs).
  */
 function installParamGuard(server: McpServer) {
+  const allowlist = buildAllowlist(
+    (server as unknown as { _registeredTools: Record<string, { inputSchema?: { shape?: Record<string, unknown> } }> })._registeredTools,
+  );
+
   const low = (server as unknown as {
     server: {
       _requestHandlers: Map<string, (req: CallToolRequest, extra: unknown) => Promise<unknown>>;
@@ -85,7 +94,7 @@ function installParamGuard(server: McpServer) {
     const toolName = request.params.name;
     const rawArgs = request.params.arguments as Record<string, unknown> | undefined;
 
-    const problem = checkParams(toolName, rawArgs, TOOL_ALLOWED_PARAMS[toolName]);
+    const problem = checkParams(toolName, rawArgs, allowlist[toolName]);
     if (problem) {
       return {
         content: [{ type: "text" as const, text: problem.message }],

@@ -13,7 +13,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { zipSync, strToU8 } from "fflate";
 import { registerAllTools } from "../lib/tools";
-import { checkParams, suggestKey } from "../lib/opendart/guard";
+import { checkParams, suggestKey, buildAllowlist } from "../lib/opendart/guard";
 import { decodeXmlChecked, replacementRatio } from "../lib/opendart/zip";
 import { extractText } from "../lib/opendart/document-parser";
 import { capResponse, effectiveMaxChars, MAX_RESPONSE_CHARS } from "../lib/tools/document";
@@ -74,6 +74,14 @@ const byRcept: Record<string, Uint8Array> = {
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async (input: RequestInfo | URL) => {
   const url = String(input);
+
+  // JSON endpoints (financial, shareholding, …): a valid "no data" body is
+  // enough — these tests only care whether the guard let the call through.
+  if (url.includes(".json")) {
+    return new Response(JSON.stringify({ status: "013", message: "no data", list: [] }), { status: 200 });
+  }
+
+  // document.xml: a ZIP keyed by rcept_no.
   const rcept = url.match(/rcept_no=(\d+)/)?.[1] ?? RCEPT_CLEAN;
   const bytes = byRcept[rcept] ?? strToU8(SAMPLE);
   const zip = zipSync({ [`${rcept}.xml`]: bytes });
@@ -126,6 +134,53 @@ async function main() {
   const multi = checkParams("opendart_get_document", { a: 1, b: 2, rcept_no: "x" },
     ["rcept_no", "mode", "section", "offset", "query", "attachment", "max_chars", "api_key"]);
   check("reports every unknown key", multi?.unknownKeys, ["a", "b"]);
+
+  // undefined allowlist (unknown tool) is not guarded; empty allowlist is.
+  check("unknown tool → not guarded", checkParams("nope", { x: 1 }, undefined), null);
+  check("no-param tool rejects any key", checkParams("t", { x: 1 }, [])?.unknownKeys, ["x"]);
+
+  // abbreviation hints that edit distance alone would miss
+  check("business_year → bsns_year", suggestKey("business_year", ["bsns_year", "corp_code"]), "bsns_year");
+  check("report_code → reprt_code", suggestKey("report_code", ["reprt_code", "corp_code"]), "reprt_code");
+
+  // ---- the guard is universal, derived from each tool's schema ------------
+  console.log("\n--- guard covers every tool, allowlist derived from schema ---");
+  const allowlist = buildAllowlist((server as unknown as { _registeredTools: Record<string, { inputSchema?: { shape?: Record<string, unknown> } }> })._registeredTools);
+  check("every registered tool has an allowlist", Object.keys(allowlist).length > 12, true);
+  check("get_document allowlist matches its schema keys",
+    allowlist["opendart_get_document"]?.sort(),
+    ["api_key", "attachment", "max_chars", "mode", "offset", "query", "rcept_no", "section"]);
+  check("no-param tool derives an empty allowlist", allowlist["get_api_key_status"], []);
+
+  // Same incident, a *different* tool: business_year on a financial tool.
+  const finTypo = await client.callTool({
+    name: "opendart_single_financial_accounts",
+    arguments: { corp_code: "00126380", business_year: "2025", reprt_code: "11014" },
+  });
+  const finText = (finTypo.content as Array<{ text: string }>)[0].text;
+  check("financial tool rejects business_year", !!finTypo.isError, true);
+  check("financial tool suggests bsns_year", finText.includes("did you mean 'bsns_year'"), true);
+
+  // report_code on a shareholding tool — another tool family entirely.
+  const shTypo = await client.callTool({
+    name: "opendart_largest_shareholder",
+    arguments: { corp_code: "00126380", bsns_year: "2025", report_code: "11011" },
+  });
+  const shText = (shTypo.content as Array<{ text: string }>)[0].text;
+  check("shareholding tool rejects report_code", !!shTypo.isError, true);
+  check("shareholding tool suggests reprt_code", shText.includes("did you mean 'reprt_code'"), true);
+
+  // a no-parameter tool rejects a stray key through the full stack
+  const noParamCall = await client.callTool({ name: "get_api_key_status", arguments: { foo: "bar" } });
+  check("no-param tool rejects a stray key end to end", !!noParamCall.isError, true);
+
+  // and a correct call to another tool still passes the guard (data errors are fine)
+  const finOk = await client.callTool({
+    name: "opendart_single_financial_accounts",
+    arguments: { corp_code: "00126380", bsns_year: "2025", reprt_code: "11014" },
+  });
+  const finOkText = (finOk.content as Array<{ text: string }>)[0].text;
+  check("correct financial call passes the guard", finOkText.includes("Unknown parameter"), false);
 
   // ---- Defense 2: server-side ceiling -----------------------------------
   console.log("\n=== 2. server-side response ceiling ===");
