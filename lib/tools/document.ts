@@ -236,7 +236,11 @@ export function registerDocumentTools(server: McpServer) {
     "opendart_get_document",
     {
       title: "공시 원문 조회 (Disclosure Document)",
-      description: `Read the original text of a DART filing (사업보고서, 주요사항보고서, etc.) by receipt number.
+      description: `원문 정독용. 재무 수치(매출·영업이익·자산·비율 등)만 필요하면
+이 도구가 아니라 financial_accounts 또는 financial_index를 쓸 것.
+원문 조회는 '뭘 찾을지 모르는 상태에서 훑을 때' 쓴다.
+
+Read the original text of a DART filing (사업보고서, 주요사항보고서, etc.) by receipt number.
 Get rcept_no from opendart_search_disclosure first.
 
 Filings are large (often several MB), so this tool is paged:

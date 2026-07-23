@@ -73,7 +73,18 @@ export function registerFinancialTools(server: McpServer) {
     server,
     "opendart_single_financial_accounts",
     "단일회사 주요계정 (Single Company Key Accounts)",
-    `Get key financial account items (revenue, operating profit, net income, assets, liabilities, equity) for a single company.
+    `금액 전용(매출·영업이익·순이익·자산·부채·자본).
+비율(ROE·부채비율·성장률)이 필요하면 financial_index를 쓸 것 — 응답이 훨씬 작다.
+당기·전기·전전기 3개 시점을 함께 반환하므로, 5개년이면 2회로 충분하다.
+연도별로 반복 호출하지 말 것.
+※ 분기 보고서(11013/11012/11014)는 '당기 3개월'과 '당기 누계' 두 열을 함께
+  반환한다. 분기 단독 수치가 필요하면 반드시 '당기 3개월' 열을 쓸 것 —
+  누계 열에서 직접 차감하지 말 것.
+  단, '당기 3개월'이 비어 있는 구간(과거 공시 등)에서만 차감으로 산출한다:
+  Q1=11013 / Q2=11012-11013 / Q3=11014-11012 / Q4=11011-11014
+  차감은 손익·현금흐름에만 적용하고, 재무상태표 항목은 시점값이므로 차감하지 않는다.
+
+Get key financial account items (revenue, operating profit, net income, assets, liabilities, equity) for a single company.
 Returns a markdown table with current, prior, and pre-prior period amounts.
 
 Args:
@@ -95,7 +106,10 @@ Args:
     "opendart_multi_financial_accounts",
     {
       title: "다중회사 주요계정 (Multi-Company Key Accounts)",
-      description: `Get key financial accounts for multiple companies at once (up to 100).
+      description: `여러 회사 비교는 반드시 이것. 회사별로 single_*을 반복 호출하지 말 것.
+최대 100개사를 1회로 처리한다.
+
+Get key financial accounts for multiple companies at once (up to 100).
 
 Args:
   - corp_code: Comma-separated 8-digit codes (e.g., "00126380,00164779")
@@ -169,7 +183,10 @@ Args:
     server,
     "opendart_single_financial_index",
     "주요 재무지표 (Financial Indicators)",
-    `Get key financial ratios and indicators for a company.
+    `재무비율 전용(수익성·안정성·성장성·활동성).
+금액이 아니라 비율을 물으면 먼저 이것을 쓴다. accounts보다 응답이 작다.
+
+Get key financial ratios and indicators for a company.
 Returns profitability, stability, growth, and activity ratios.
 
 Args:
