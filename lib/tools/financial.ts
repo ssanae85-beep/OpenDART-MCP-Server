@@ -91,7 +91,12 @@ Args:
   - corp_code: 8-digit company code
   - bsns_year: Business year (e.g., "2024")
   - reprt_code: Report type (11011=Annual, 11012=Semi-annual, 11013=Q1, 11014=Q3)
-  - fs_div: OFS=Individual, CFS=Consolidated (default: CFS)`,
+  - fs_div: OFS=Individual, CFS=Consolidated (default: CFS)
+
+※ 데이터 커버리지: OpenDART API 스펙상 bsns_year는 2015년 이후만 제공된다.
+  연간은 2015년 조회분부터 응답이 있고, 전전기 열까지 포함하면 2013년 수치까지
+  소급된다. 분기는 2016년부터다(실측). 그 이전은 빈 응답이므로 재시도하지 말 것.
+  2015년 이전 재무 수치가 필요하면 get_document로 원문을 읽어야 한다.`,
     "fnlttSinglAcnt",
     { fs_div: fsDiv },
     (data, context) => formatFinancialTableMd(
