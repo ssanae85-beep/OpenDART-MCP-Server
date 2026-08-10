@@ -3,6 +3,14 @@ const STATUS_MESSAGES: Record<string, { ko: string; en: string }> = {
   "010": { ko: "등록되지 않은 키입니다", en: "Unregistered API key" },
   "011": { ko: "사용할 수 없는 키입니다", en: "Disabled API key" },
   "013": { ko: "조회된 데이터가 없습니다", en: "No data found" },
+  // document.xml only. Two different causes share this code: an archive that
+  // hasn't been generated yet (filed hours ago — retry later) and one that will
+  // never exist (notice-type filings such as 효력발생안내). Verified against the
+  // live API; the message says both so the caller can tell them apart by age.
+  "014": {
+    ko: "파일이 존재하지 않습니다. 접수 당일 건이면 원문이 아직 생성되지 않은 것이니 나중에 다시 시도하고, 며칠 지난 건이면 원문이 없는 공시입니다(효력발생안내 등 안내성 공시)",
+    en: "File does not exist. If the filing is from today the archive may not be generated yet — retry later; if it is days old, this filing has no document (notice-type disclosures).",
+  },
   "020": {
     ko: "요청 제한을 초과하였습니다",
     en: "Request limit exceeded. Please wait or use your own API key.",

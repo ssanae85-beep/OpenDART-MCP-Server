@@ -58,6 +58,9 @@ const AUDIT_CONSOLIDATED = `<?xml version="1.0" encoding="utf-8"?>
 const ERROR_BODY = `<?xml version="1.0" encoding="UTF-8"?>
 <result><status>013</status><message>조회된 데이타가 없습니다.</message></result>`;
 
+/** Verbatim body the live API returns for a filing with no archive. */
+const ERROR_BODY_014 = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><result><status>014</status><message>파일이 존재하지 않습니다.</message></result>`;
+
 /** Response's typings don't accept a bare Uint8Array view; hand it the buffer. */
 function toBody(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
@@ -66,13 +69,14 @@ function toBody(bytes: Uint8Array): ArrayBuffer {
 let requestCount = 0;
 let lastUrl = "";
 let serveError = false;
+let errorBody = ERROR_BODY;
 
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async (input: RequestInfo | URL) => {
   lastUrl = String(input);
   requestCount++;
   if (serveError) {
-    return new Response(toBody(strToU8(ERROR_BODY)), { status: 200 });
+    return new Response(toBody(strToU8(errorBody)), { status: 200 });
   }
   // Attachments come first in the archive: the main doc must be found by name,
   // not by position.
@@ -268,6 +272,18 @@ async function main() {
   check("isError", err.isError, true);
   check("maps status 013", err.text.includes("013"), true);
   check("friendly message", err.text.includes("조회된 데이터가 없습니다"), true);
+
+  // 014 was unmapped and fell through to 900's "정의되지 않은 오류", which hides
+  // the one thing the caller needs: whether to retry or give up.
+  console.log("\n--- OpenDART error body (014, no archive) ---");
+  errorBody = ERROR_BODY_014;
+  const err14 = await call({ rcept_no: "20260810900582" });
+  console.log(err14.text);
+  check("isError", err14.isError, true);
+  check("maps status 014", err14.text.includes("014"), true);
+  check("says the file does not exist", err14.text.includes("파일이 존재하지 않습니다"), true);
+  check("does not fall back to the 900 message", err14.text.includes("정의되지 않은 오류"), false);
+  check("tells the caller a same-day filing may appear later", err14.text.includes("나중에 다시 시도"), true);
 
   console.log(`\n${failures === 0 ? "ALL PASSED" : `${failures} FAILURE(S)`}`);
   process.exit(failures === 0 ? 0 : 1);
