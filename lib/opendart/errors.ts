@@ -3,13 +3,15 @@ const STATUS_MESSAGES: Record<string, { ko: string; en: string }> = {
   "010": { ko: "등록되지 않은 키입니다", en: "Unregistered API key" },
   "011": { ko: "사용할 수 없는 키입니다", en: "Disabled API key" },
   "013": { ko: "조회된 데이터가 없습니다", en: "No data found" },
-  // document.xml only. Two different causes share this code: an archive that
-  // hasn't been generated yet (filed hours ago — retry later) and one that will
-  // never exist (notice-type filings such as 효력발생안내). Verified against the
-  // live API; the message says both so the caller can tell them apart by age.
+  // document.xml only. Two different causes share this code — an archive that
+  // hasn't been generated yet, and one that never exists (some notice-type
+  // filings) — and the API does not distinguish them. Age only ranks the
+  // candidates: 20260810900582 returned 014 while its document was retrievable
+  // from the DART viewer, so a 014 alone never establishes absence. The message
+  // says so, rather than asserting a cause the response cannot support.
   "014": {
-    ko: "파일이 존재하지 않습니다. 접수 당일 건이면 원문이 아직 생성되지 않은 것이니 나중에 다시 시도하고, 며칠 지난 건이면 원문이 없는 공시입니다(효력발생안내 등 안내성 공시)",
-    en: "File does not exist. If the filing is from today the archive may not be generated yet — retry later; if it is days old, this filing has no document (notice-type disclosures).",
+    ko: "파일이 존재하지 않습니다. 접수 당일~수일 내 건이면 원문이 아직 생성되지 않았을 수 있으니 시간을 두고 재시도하세요. 오래된 건이면 원문 부재 가능성이 있으나 API는 두 경우를 같은 코드로 반환하므로, 확정하려면 DART 뷰어에서 원문을 확인해야 합니다",
+    en: "File does not exist. A recent filing may simply not be archived yet — retry later. For an older one the document may be genuinely absent, but the API returns 014 for both cases, so confirm in the DART viewer before concluding it is missing.",
   },
   "020": {
     ko: "요청 제한을 초과하였습니다",

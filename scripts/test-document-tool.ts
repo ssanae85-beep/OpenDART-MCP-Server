@@ -283,7 +283,12 @@ async function main() {
   check("maps status 014", err14.text.includes("014"), true);
   check("says the file does not exist", err14.text.includes("파일이 존재하지 않습니다"), true);
   check("does not fall back to the 900 message", err14.text.includes("정의되지 않은 오류"), false);
-  check("tells the caller a same-day filing may appear later", err14.text.includes("나중에 다시 시도"), true);
+  check("suggests retrying a recent filing", err14.text.includes("재시도"), true);
+  // 014 covers both "not generated yet" and "never exists"; 20260810900582 came
+  // back 014 with its document retrievable from the viewer, so the message must
+  // not state absence as fact.
+  check("says the API cannot tell the two cases apart", err14.text.includes("같은 코드로 반환"), true);
+  check("points at the viewer for confirmation", err14.text.includes("DART 뷰어"), true);
 
   console.log(`\n${failures === 0 ? "ALL PASSED" : `${failures} FAILURE(S)`}`);
   process.exit(failures === 0 ? 0 : 1);

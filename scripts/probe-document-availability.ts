@@ -9,6 +9,15 @@
  *   npm run probe:doc -- --end 2026-08-12
  *   npm run probe:doc -- --end 2026-08-12 --days 5 --samples 2 --market Y
  *
+ * 재검증 판정표 (예: 20260810900582)
+ *   npm run probe:doc -- --rcept 20260810900582
+ *     성공      → 일시적 지연 확정. 경계는 D+1 이내
+ *     여전히 014 → 지연이 하루 이상이거나 미지의 제3 원인.
+ *                  원문 부재는 이 건에 한해 이미 반증됨(뷰어에서 원문 확보 완료)
+ *
+ * 014는 "아직 생성 안 됨"과 "원문 자체가 없음"을 구분하지 않는다. 어느 쪽인지는
+ * API 응답만으로 판정할 수 없고, 뷰어에서 원문이 받아지는지 확인해야 갈린다.
+ *
  * Reads OPENDART_API_KEY from the environment (or .env). The key is never printed.
  *
  * Budget: 1 list call + <samples> document calls per date, hard-capped at
@@ -54,6 +63,13 @@ if (!/^\d{4}-\d{2}-\d{2}$/.test(END_DATE)) {
 }
 
 // ---------------------------------------------------------------- primitives
+
+/**
+ * Beyond this age a 014 starts to look like a filing that has no archive rather
+ * than one that is still being generated. A hint for ranking candidates only —
+ * the API returns 014 for both, so this can never settle it on its own.
+ */
+const STALE_AFTER_DAYS = 7;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -285,6 +301,29 @@ async function probeOne(rceptNo: string) {
   console.log(
     `래퍼 매핑     : ${w.known ? `있음 → "${w.ko}"` : `★ 없음 → 900 폴백 "정의되지 않은 오류가 발생하였습니다"`}`,
   );
+
+  if (p.dartStatus === "014") {
+    const d = rceptNo.slice(0, 8);
+    const ageDays = Math.floor(
+      (Date.now() - Date.parse(`${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6)}T00:00:00Z`)) / 86400000,
+    );
+    console.log(`\n접수 후 경과   : ${ageDays}일`);
+    console.log(`결과: 실패 — 아래는 확정이 아니라 후보입니다.`);
+    // 014 does not distinguish "not generated yet" from "never exists": the API
+    // returns the same code either way. Age only shifts which candidate is more
+    // likely, so neither branch may conclude on its own.
+    if (ageDays <= STALE_AFTER_DAYS) {
+      console.log(`  · 아카이브 미생성(일시적) 가능성 — 시간 경과 후 재시도 권장`);
+      console.log(`  · 이 시점에 원문 부재로 단정할 수 없음 (API는 두 상태를 같은 코드로 반환)`);
+    } else {
+      console.log(`  · 원문 부재 가능성 (접수 후 ${ageDays}일 경과)`);
+      console.log(`  · 다만 API 결과만으로 확정 불가 — DART 뷰어에서 원문이 받아지는지 사람이 확인 필요`);
+      console.log(`    https://dart.fss.or.kr/dsaf001/main.do?rcpNo=${rceptNo}`);
+      console.log(`  · 확인된 부재 사례(20260722100039 효력발생안내)의 근거는 공시 유형이지 014 코드가 아님`);
+    }
+    return;
+  }
+
   console.log(`\n결과: 실패.`);
 }
 
@@ -503,11 +542,12 @@ function report(probes: DocProbe[], dates: string[]) {
           `  같은 날 성공 순번 최대 ${Math.max(...okSeq)} / 실패 순번 최소 ${Math.min(...badSeq)} → 그 사이에 시각 경계.`,
         );
       }
-      console.log(`  확인법: 내일 --rcept 로 재조회. 성공하면 지연, 여전히 014면 원문 없는 공시.`);
+      console.log(`  확인법: --rcept 로 재조회. 성공하면 지연 확정, 여전히 014면 원인 미확정(아래 참고).`);
     }
     if (staleBad.length) {
-      console.log(`→ 과거일(${staleBad.join(", ")}) 실패: 시간이 지나도 안 생기므로 원문 자체가 없는 공시.`);
-      console.log(`  (효력발생안내·기타시장안내 등 안내성 공시는 목록에만 있고 원문이 없음)`);
+      console.log(`→ 과거일(${staleBad.join(", ")}) 실패: 원문 부재 가능성.`);
+      console.log(`  단, API는 미생성과 부재를 같은 014로 반환하므로 확정 불가 — 뷰어에서 사람이 확인 필요.`);
+      console.log(`  (효력발생안내 등 부재가 확인된 사례가 있으나, 그 근거는 공시 유형이지 014 코드가 아님)`);
     }
   }
 
