@@ -14,7 +14,10 @@
  *   판정 불가      = 필요한 TTM 중 하나라도 결측이거나 TTM 매출 ≤ 0 (비고 결측/매출≤0)
  *                   대상 분기는 되는데 직전 분기만 안 되면 "판정 불가(전기)".
  *                   적자 영업이익은 그대로 쓴다 — 절댓값·0 클램프 없음.
- *   QoQ 참고열     = OPM(t) > OPM(t−1)
+ *   비교는 언제나 4분기 전 TTM과만 한다 (직전 분기 TTM과 직접 비교하지 않음).
+ *   기준           = 연결이 대상 분기 TTM(t, t−4)을 갖추면 연결, 못 갖출 때만 별도(비고 "별도").
+ *                   한 종목 안에서 t와 t−1의 기준을 섞지 않는다 — 연결로 t−1이 안 되면
+ *                   별도로 바꾸지 않고 "판정 불가(전기)".
  *
  * DART 호출량
  *   fnlttMultiAcnt(100개사/회) × 필요한 보고서 5종 × ceil(N/100)
@@ -107,33 +110,37 @@ export interface Verdict {
   corp: string; name: string; fs: "CFS" | "OFS" | "-";
   /** OPM(t−4), OPM(t), OPM(t−5), OPM(t−1) — 비율(0.1 = 10%) */
   opmBase: number | null; opm: number | null; prevOpmBase: number | null; prevOpm: number | null;
-  qoq: boolean | null; ttmRev: number | null; ttmOp: number | null;
-  status: Status; note: Note;
+  ttmRev: number | null; ttmOp: number | null;
+  /** 결측/매출≤0, 별도 기준이면 앞에 "별도" */
+  status: Status; note: string;
 }
 
 export function judge(store: Store, corp: string, name: string, y: number, q: number): Verdict {
   const [py, pq] = prevQuarter(y, q);
-  const cur = reportsFor(y, q), prev = reportsFor(py, pq);
-  const has = (fs: "CFS" | "OFS", need: Array<[number, RC]>) =>
-    need.every(([yy, rc]) => { const s = store.get(`${yy}-${rc}`)?.get(corp)?.[fs]; return s?.rev && s?.op; });
-  // 두 분기 모두 갖춘 기준을 우선(연결 → 별도), 없으면 대상 분기만이라도 갖춘 기준
-  const FS = ["CFS", "OFS"] as const;
-  const fs = FS.find((f) => has(f, [...cur, ...prev])) ?? FS.find((f) => has(f, cur)) ?? null;
   const blank: Verdict = { corp, name, fs: "-", opmBase: null, opm: null, prevOpmBase: null, prevOpm: null,
-    qoq: null, ttmRev: null, ttmOp: null, status: "NA", note: "결측" };
-  if (!fs) return blank;
+    ttmRev: null, ttmOp: null, status: "NA", note: "결측" };
 
-  const get = (yy: number, rc: RC) => store.get(`${yy}-${rc}`)?.get(corp)?.[fs];
-  const rC = ttmPair(get, y, q, "rev"), oC = ttmPair(get, y, q, "op");
+  // 기준은 대상 분기만 보고 고른다: 연결이 TTM(t)·TTM(t−4)를 갖추면 연결, 아니면 별도.
+  // 직전 분기는 고른 기준으로만 계산한다 — 연결로 안 된다고 별도로 바꾸지 않는다.
+  const basis = (fs: "CFS" | "OFS") => {
+    const get = (yy: number, rc: RC) => store.get(`${yy}-${rc}`)?.get(corp)?.[fs];
+    const r = ttmPair(get, y, q, "rev"), o = ttmPair(get, y, q, "op");
+    return [r.cur, r.base, o.cur, o.base].every((x) => x != null) ? { fs, get, rC: r, oC: o } : null;
+  };
+  const b = basis("CFS") ?? basis("OFS");
+  if (!b) return blank;
+
+  const { fs, get, rC, oC } = b;
   const rP = ttmPair(get, py, pq, "rev"), oP = ttmPair(get, py, pq, "op");
   const now = phase2(rC.base, oC.base, rC.cur, oC.cur);
   const before = phase2(rP.base, oP.base, rP.cur, oP.cur);
-  const v: Verdict = { ...blank, fs, note: "",
+  const note = (n: Note) => [fs === "OFS" ? "별도" : "", n].filter(Boolean).join(", ");
+  const v: Verdict = { ...blank, fs, note: note(""),
     opmBase: now.opmBase, opm: now.opm, prevOpmBase: before.opmBase, prevOpm: before.opm,
-    qoq: phase2(rP.cur, oP.cur, rC.cur, oC.cur).ok, ttmRev: rC.cur, ttmOp: oC.cur };
+    ttmRev: rC.cur, ttmOp: oC.cur };
 
-  if (now.ok == null) return { ...v, status: "NA", note: now.note };
-  if (before.ok == null) return { ...v, status: "NA_PREV", note: before.note };
+  if (now.ok == null) return { ...v, status: "NA", note: note(now.note) };
+  if (before.ok == null) return { ...v, status: "NA_PREV", note: note(before.note) };
   v.status = now.ok ? (before.ok ? "CONTINUE" : "NEW") : (before.ok ? "LOST" : "NONE");
   return v;
 }
@@ -193,16 +200,16 @@ export function render(vs: Verdict[], y: number, q: number, output: "new" | "all
   const [py, pq] = prevQuarter(y, q);
   const cnt = (s: Status) => vs.filter((v) => v.status === s).length;
   const lines = [
-    `2국면 전환 판정 · ${py}Q${pq} → ${y}Q${q} · 2국면 = TTM OPM(t) > OPM(t−4) · QoQ = OPM(t) > OPM(t−1) · [1차] DART fnlttMultiAcnt`,
+    `2국면 전환 판정 · ${py}Q${pq} → ${y}Q${q} · 2국면 = TTM OPM(t) > OPM(t−4) · [1차] DART fnlttMultiAcnt`,
     `대상 ${vs.length} | ${ORDER.map((s) => `${LABEL[s]} ${cnt(s)}`).join(" | ")}`,
   ];
   if (unresolved.length) lines.push(`코드 변환 실패: ${unresolved.join(", ")}`);
   const rows = vs.filter((v) => output === "all" || v.status === "NEW")
     .sort((a, b) => ORDER.indexOf(a.status) - ORDER.indexOf(b.status));
-  lines.push("", `| 종목 | 기준 | 판정 | OPM(t−4)(%) | OPM(t)(%) | ΔOPM(%p) | QoQ | TTM매출(억) | TTM영익(억) | 비고 |`,
-    `|---|---|---|---|---|---|---|---|---|---|`);
+  lines.push("", `| 종목 | 기준 | 판정 | OPM(t−4)(%) | OPM(t)(%) | ΔOPM(%p) | TTM매출(억) | TTM영익(억) | 비고 |`,
+    `|---|---|---|---|---|---|---|---|---|`);
   for (const v of rows)
-    lines.push(`| ${v.name} | ${v.fs} | ${LABEL[v.status]} | ${opmPct(v.opmBase)} | ${opmPct(v.opm)} | ${dPp(v.opmBase, v.opm)} | ${v.qoq == null ? "-" : v.qoq ? "○" : "×"} | ${eok(v.ttmRev)} | ${eok(v.ttmOp)} | ${v.note} |`);
+    lines.push(`| ${v.name} | ${v.fs} | ${LABEL[v.status]} | ${opmPct(v.opmBase)} | ${opmPct(v.opm)} | ${dPp(v.opmBase, v.opm)} | ${eok(v.ttmRev)} | ${eok(v.ttmOp)} | ${v.note} |`);
   if (output === "new") {
     for (const s of ["NA_PREV", "NA"] as const) {
       const na = vs.filter((v) => v.status === s);
