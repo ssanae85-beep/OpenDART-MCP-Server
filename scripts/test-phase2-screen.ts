@@ -8,7 +8,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { registerAllTools } from "../lib/tools";
 import {
-  judge, ttmPair, reportsFor, prevQuarter, render,
+  judge, phase2, ttmPair, reportsFor, prevQuarter, render,
   type Store, type CorpRep, type Amt, type RC,
 } from "../lib/tools/phase2-screen";
 
@@ -31,7 +31,9 @@ const near = (a: number | null, b: number) => a != null && Math.abs(a - b) < 1e-
 // TTM(26Q1) = 440 + 110 − 100 = 450   base TTM(25Q1) = 400 + 100 −  95 = 405   → +11.11%
 // op TTM(26Q2) = 44 + 30 − 20 = 54    base = 40 + 20 − 19 = 41                  → +31.71%
 // op TTM(26Q1) = 44 + 10.5 − 10 = 44.5 base = 40 + 10 − 9.5 = 40.5             → +9.88%
-// prev: op 9.88 < rev 11.11 (not phase-2) · now: op 31.71 > rev 17.07 → NEW_ACCEL
+// OPM 26Q2 = 54/480 = 11.25%  vs 25Q2 41/410 = 10%    → phase-2
+// OPM 26Q1 = 44.5/450 = 9.89% vs 25Q1 40.5/405 = 10% → not phase-2   ⇒ 신규 전환
+// QoQ: OPM 26Q2 11.25% > 26Q1 9.89% → ○
 const E = 1e8;
 const REV = { fy: { 2024: 400, 2025: 440 }, cum: { "2024-1": 95, "2025-1": 100, "2026-1": 110, "2024-2": 190, "2025-2": 200, "2026-2": 240 } };
 const OP = { fy: { 2024: 40, 2025: 44 }, cum: { "2024-1": 9.5, "2025-1": 10, "2026-1": 10.5, "2024-2": 19, "2025-2": 20, "2026-2": 30 } };
@@ -74,18 +76,56 @@ check("TTM op 26Q2 = 54", o2.cur! / E, 54);
 check("TTM op 26Q1 = 44.5", o1.cur! / E, 44.5);
 check("cumulative preferred over the quarter-alone field", r2.cur! > 0, true);
 
-const vA = judge(st, "X", "가상", 2026, 2, 3);
-check("status NEW_ACCEL", vA.status, "NEW_ACCEL");
-check("cur rev growth +17.07%", near(vA.curRev, (480 / 410 - 1) * 100), true);
-check("cur op growth +31.71%", near(vA.curOp, (54 / 41 - 1) * 100), true);
-check("prev rev growth +11.11%", near(vA.prevRev, (450 / 405 - 1) * 100), true);
-check("prev op growth +9.88%", near(vA.prevOp, (44.5 / 40.5 - 1) * 100), true);
-check("QoQ also phase-2", vA.qoq, true);
+const vA = judge(st, "X", "가상", 2026, 2);
+check("status NEW", vA.status, "NEW");
+check("OPM(t) = 54/480", near(vA.opm, 54 / 480), true);
+check("OPM(t−4) = 41/410", near(vA.opmBase, 41 / 410), true);
+check("OPM(t−1) = 44.5/450", near(vA.prevOpm, 44.5 / 450), true);
+check("OPM(t−5) = 40.5/405", near(vA.prevOpmBase, 40.5 / 405), true);
+check("QoQ: OPM(t) > OPM(t−1)", vA.qoq, true);
 
 // Q4: TTM is the annual figure itself, base is its comparative column
 const q4: Store = new Map([["2026-11011", new Map([["X", { CFS: { rev: { th: 500, thCum: null, fr: 440, frCum: null }, op: { th: 60, thCum: null, fr: 44, frCum: null } }, OFS: {} }]])]]);
 const q4get = (y: number, rc: RC) => q4.get(`${y}-${rc}`)?.get("X")?.CFS;
 check("Q4 TTM = FY", ttmPair(q4get, 2026, 4, "rev"), { cur: 500, base: 440 });
+
+console.log("\n=== phase-2 = OPM(t) > OPM(t−4), synthetic (TTM t−4 → t, rev/op) ===");
+// [revBase, opBase, revCur, opCur, expected ok, expected note]
+const SYN: Array<[number, number, number, number, boolean | null, string]> = [
+  [1000, 100, 1100, 121, true, ""],
+  [500, -100, 600, -60, true, ""],
+  [500, -50, 550, 22, true, ""],
+  [500, -50, 400, -60, false, ""],
+  [1000, 100, 900, 99, true, ""],
+  [1000, 100, 1200, 120, false, ""],   // tie: 10% = 10%, strict > fails
+  [0, -10, 50, -5, null, "매출≤0"],
+];
+for (const [rb, ob, rc, oc, ok, note] of SYN) {
+  const r = phase2(rb, ob, rc, oc);
+  check(`${rb}/${ob} → ${rc}/${oc}: ${ok == null ? "판정 불가" : ok ? "성립" : "불성립"}`, [r.ok, r.note], [ok, note]);
+}
+check("single missing value → 판정 불가(결측)", [phase2(1000, null, 1100, 121).ok, phase2(1000, null, 1100, 121).note], [null, "결측"]);
+check("negative revenue → 매출≤0", phase2(1000, 100, -5, 1).note, "매출≤0");
+
+// The same cases through judge() at 2026Q4, so the Q4 TTM path (annual report,
+// comparative column = t−4) feeds the verdict. Prior quarter 2026Q3 is pinned
+// to OPM(t−1) = OPM(t−5) = 10% (not phase-2), so 성립 ⇒ 신규 전환.
+function q4Store(rb: number, ob: number, rc: number, oc: number): Store {
+  const A = (th: number, fr: number): Amt => ({ th: th * E, thCum: null, fr: fr * E, frCum: null });
+  const Z: Amt = { th: 0, thCum: 0, fr: 0, frCum: 0 };
+  const rep = (s: CorpRep["CFS"]): CorpRep => ({ CFS: s, OFS: {} });
+  return new Map([
+    ["2026-11011", new Map([["X", rep({ rev: A(rc, rb), op: A(oc, ob) })]])],
+    ["2025-11011", new Map([["X", rep({ rev: A(1000, 1000), op: A(100, 100) })]])],
+    ["2026-11014", new Map([["X", rep({ rev: Z, op: Z })]])],
+    ["2025-11014", new Map([["X", rep({ rev: Z, op: Z })]])],
+  ]);
+}
+const EXPECT = { true: "NEW", false: "NONE", null: "NA" } as const;
+for (const [rb, ob, rc, oc, ok, note] of SYN) {
+  const v = judge(q4Store(rb, ob, rc, oc), "X", "가상", 2026, 4);
+  check(`judge 2026Q4 ${rb}/${ob} → ${rc}/${oc}`, [v.status, v.note], [EXPECT[String(ok) as "true"], note]);
+}
 
 console.log("\n=== status matrix ===");
 // With every base fixed at 100, a quarter's cumulative of 50+g yields growth g%.
@@ -93,27 +133,47 @@ function flat(prevG: number, curG: number): Series {
   return { fy: { 2024: 100, 2025: 100 }, cum: { "2024-1": 50, "2025-1": 50, "2026-1": 50 + prevG, "2024-2": 50, "2025-2": 50, "2026-2": 50 + curG } };
 }
 const statusOf = (rev: [number, number], op: [number, number], fs: "CFS" | "OFS" = "CFS", drop?: string) =>
-  judge(storeFor("X", flat(...rev), flat(...op), fs, drop), "X", "가상", 2026, 2, 3);
+  judge(storeFor("X", flat(...rev), flat(...op), fs, drop), "X", "가상", 2026, 2);
 
-check("NEW_ACCEL: prev op≥0, not phase-2 → phase-2", statusOf([10, 10], [5, 20]).status, "NEW_ACCEL");
-check("NEW_RECOVERY: prev op<0 → phase-2", statusOf([10, 10], [-5, 20]).status, "NEW_RECOVERY");
+check("NEW: not phase-2 → phase-2", statusOf([10, 10], [5, 20]).status, "NEW");
+check("NEW from a falling op line too (no accel/recovery split)", statusOf([10, 10], [-5, 20]).status, "NEW");
 check("CONTINUE", statusOf([10, 10], [20, 20]).status, "CONTINUE");
 check("LOST", statusOf([10, 10], [20, 5]).status, "LOST");
 check("NONE", statusOf([10, 10], [5, 5]).status, "NONE");
-const low = statusOf([10, 1], [5, 5]);
-check("LOWREV flagged when rev growth < floor", [low.status, low.note], ["NEW_ACCEL", "LOWREV"]);
+check("weak revenue growth is no longer flagged", statusOf([10, 1], [5, 5]).note, "");
 check("OFS used when CFS is absent", statusOf([10, 10], [5, 20], "OFS").fs, "OFS");
-const miss = statusOf([10, 10], [5, 20], "CFS", "2025-11013");
-check("missing report → NA", [miss.status, miss.note], ["NA", "보고서/계정 누락(결산월 상이·금융업 등)"]);
+const miss = statusOf([10, 10], [5, 20], "CFS", "2026-11012");
+check("current-quarter report missing → 판정 불가(결측)", [miss.status, miss.note, miss.fs], ["NA", "결측", "-"]);
+const missPrev = statusOf([10, 10], [5, 20], "CFS", "2025-11013");
+check("prior-quarter report missing → 판정 불가(전기)(결측)", [missPrev.status, missPrev.note, missPrev.fs], ["NA_PREV", "결측", "CFS"]);
+check("…still shows the current OPMs", [near(missPrev.opm, 120 / 110), near(missPrev.opmBase, 1)], [true, true]);
+// op TTM 100 → −50 while revenue grows: plain 미성립, not 판정 불가 (no clamp)
 const neg = statusOf([10, 10], [5, -150]);
-check("loss-making → NA", [neg.status, neg.note], ["NA", "영업이익 적자/기저 음수"]);
+check("loss-making current TTM → 미성립", [neg.status, neg.note], ["NONE", ""]);
+check("…with a negative OPM(t)", near(neg.opm, -50 / 110), true);
+
+// CFS complete only for the current quarter but OFS complete for both → OFS
+const both: Store = storeFor("X", flat(10, 10), flat(5, 20), "OFS");
+for (const [k, m] of storeFor("X", flat(10, 10), flat(5, 20), "CFS", "2025-11013")) m.forEach((rep, c) => { both.get(k)!.get(c)!.CFS = rep.CFS; });
+check("basis complete for both quarters preferred", [judge(both, "X", "가상", 2026, 2).fs, judge(both, "X", "가상", 2026, 2).status], ["OFS", "NEW"]);
 
 console.log("\n=== render ===");
-const out = render([vA, neg], 2026, 2, "new", ["없는회사"]);
+const naV = { ...miss, name: "결측사" }, naPrev = { ...missPrev, name: "전기결측사" };
+const out = render([vA, neg, naV, naPrev], 2026, 2, "new", ["없는회사"]);
+console.log(out);
 check("header names the quarter pair", out.includes("2026Q1 → 2026Q2"), true);
 check("unresolved inputs listed", out.includes("코드 변환 실패: 없는회사"), true);
-check("new mode shows the new-transition row", out.includes("| 가상 | CFS | 신규·가속 | +11.1 / +9.9 | +17.1 / +31.7 | ○ | 480 | 54 |  |"), true);
-check("new mode lists NA separately", out.includes("판정불가: 가상(영업이익 적자/기저 음수)"), true);
+check("new mode shows the new-transition row", out.includes("| 가상 | CFS | 신규 전환 | 10.0 | 11.3 | +1.2 | ○ | 480 | 54 |  |"), true);
+check("new mode hides 미성립 rows", out.includes("미성립 |"), false);
+check("new mode lists 판정 불가 separately", out.includes("판정 불가: 결측사(결측)"), true);
+check("new mode lists 판정 불가(전기) separately", out.includes("판정 불가(전기): 전기결측사(결측)"), true);
+const all = render([naV, neg, vA], 2026, 2, "all", []);
+console.log(all);
+check("all mode: negative ΔOPM and OPM use ASCII '-'", all.includes("| 가상 | CFS | 미성립 | 100.0 | -45.5 | -145.5 | × | 110 | -50 |  |"), true);
+check("no U+2212 in any table row", all.split("\n").slice(4).some((l) => l.includes("\u2212")), false);
+check("all mode sorts 신규 전환 first, 판정 불가 last", all.indexOf("신규 전환 |") < all.indexOf("미성립 |") && all.indexOf("미성립 |") < all.indexOf("| 판정 불가 |"), true);
+check("columns: OPM(t−4), OPM(t), ΔOPM; no YoY columns", all.includes("| OPM(t−4)(%) | OPM(t)(%) | ΔOPM(%p) |") && !all.includes("매출/영익"), true);
+check("tie shows a bare 0.0", render([judge(q4Store(1000, 100, 1200, 120), "X", "동률", 2026, 4)], 2026, 4, "all", []).includes("| 동률 | CFS | 미성립 | 10.0 | 10.0 | 0.0 |"), true);
 
 // ─────────────── through the MCP server, fetch stubbed ───────────────
 // Rows carry a decoy quarter-alone thstrm_amount so a formula that read it
@@ -168,7 +228,7 @@ async function main() {
   check("no error", res.isError, false);
   check("name, stock code and corp_code dedupe to one company", res.text.includes("대상 1 |"), true);
   check("unknown name reported, not dropped", res.text.includes("코드 변환 실패: 없는회사"), true);
-  check("hand-checked row reproduced", res.text.includes("| 삼성전자 | CFS | 신규·가속 | +11.1 / +9.9 | +17.1 / +31.7 | ○ | 480 | 54 |  |"), true);
+  check("hand-checked row reproduced", res.text.includes("| 삼성전자 | CFS | 신규 전환 | 10.0 | 11.3 | +1.2 | ○ | 480 | 54 |  |"), true);
   check("5 reports × 1 batch = 5 DART calls", dartCalls, 5);
 
   console.log("\n=== a rate limit is an error, not 'missing reports' ===");
@@ -177,13 +237,21 @@ async function main() {
   console.log(rl.text);
   check("isError", rl.isError, true);
   check("names status 020", rl.text.includes("020"), true);
-  check("does not pose as a verdict table", rl.text.includes("판정불가"), false);
+  check("does not pose as a verdict table", rl.text.includes("판정 불가"), false);
 
-  console.log("\n=== 013 for one report → that company is NA ===");
+  console.log("\n=== 013 for a prior-quarter report → 판정 불가(전기) ===");
   mode = "no-data";
   const nd = await call({ items: "삼성전자", year: 2026, quarter: 2, output: "all" });
   check("not an error", nd.isError, false);
-  check("marked 판정불가 with the missing-report note", nd.text.includes("판정불가 |") && nd.text.includes("보고서/계정 누락"), true);
+  check("marked 판정 불가(전기) · 결측", nd.text.includes("| 판정 불가(전기) | 10.0 | 11.3 | +1.2 | ○ | 480 | 54 | 결측 |"), true);
+
+  console.log("\n=== removed parameter, new description ===");
+  const rf = await call({ items: "삼성전자", year: 2026, quarter: 2, rev_floor: 3 });
+  check("rev_floor is now rejected as unknown", rf.isError, true);
+  const { tools: ts } = await client.listTools();
+  const def = ts.find((t) => t.name === "opendart_phase2_screen")!;
+  check("description states the OPM rule", def.description?.startsWith("여러 종목의 2국면(TTM OPM이 4분기 전 TTM 대비 상승) 성립과 신규 전환 여부를"), true);
+  check("rev_floor gone from schema", Object.keys((def.inputSchema as { properties: object }).properties).includes("rev_floor"), false);
 
   console.log("\n=== guard covers the new tool ===");
   mode = "ok";

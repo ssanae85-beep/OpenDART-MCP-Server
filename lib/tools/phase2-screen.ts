@@ -3,24 +3,24 @@
  *
  * 목적
  *   여러 종목의 TTM 매출액·영업이익을 서버 안에서 계산해
- *   "직전 분기 2국면 미충족 → 대상 분기 충족" 여부를 회사당 한 줄로 반환한다.
+ *   "직전 분기 2국면 불성립 → 대상 분기 성립" 여부를 회사당 한 줄로 반환한다.
  *   원자료(재무상태표·연결/별도 전체)를 모델 컨텍스트에 싣지 않는 것이 핵심.
  *
- * 판정 정의 (기본값)
- *   TTM(Y,q)      = FY(Y-1) + 누계(Y,q) − 누계(Y-1,q)        (q=4이면 FY(Y))
- *   YoY 증가율     = TTM(Y,q) / TTM(Y-1,q) − 1  (기저 ≤ 0이면 판정 불가)
- *   2국면          = 영업이익 증가율 > 매출액 증가율
- *   신규 전환      = 직전 분기 미충족 & 대상 분기 충족
- *     - NEW_ACCEL    : 직전 분기 영업이익 증가율 ≥ 0 (가속형)
- *     - NEW_RECOVERY : 직전 분기 영업이익 증가율 < 0 (회복형)
- *   QoQ 참고열     = TTM(Y,q) vs TTM(직전 분기) 기준으로도 2국면인지
- *   LOWREV 플래그  = 대상 분기 매출 증가율 < rev_floor(기본 3%)
+ * 판정 정의
+ *   TTM(Y,q)      = FY(Y-1) + 누계(Y,q) − 누계(Y-1,q)        (q=4이면 FY(Y), 즉 Q4 = 연간 − 3Q 누계)
+ *   OPM(t)        = TTM 영업이익 합계 ÷ TTM 매출 합계        (분기 OPM 평균 아님)
+ *   2국면(t)      = OPM(t) > OPM(t−4)   엄격 부등호, 반올림 전 값 비교
+ *   신규 전환      = 2국면(t) 성립 & 2국면(t−1) 불성립   (2국면(t−1) = OPM(t−1) > OPM(t−5))
+ *   판정 불가      = 필요한 TTM 중 하나라도 결측이거나 TTM 매출 ≤ 0 (비고 결측/매출≤0)
+ *                   대상 분기는 되는데 직전 분기만 안 되면 "판정 불가(전기)".
+ *                   적자 영업이익은 그대로 쓴다 — 절댓값·0 클램프 없음.
+ *   QoQ 참고열     = OPM(t) > OPM(t−1)
  *
  * DART 호출량
  *   fnlttMultiAcnt(100개사/회) × 필요한 보고서 5종 × ceil(N/100)
  *   예) 444개사, 26Q2 판정 → 5종 × 5묶음 = 25회
  *
- * 이 저장소에 맞춘 차이 (판정 로직은 원본 그대로)
+ * 이 저장소에 맞춘 차이
  *   - API 키: DART_API_KEY 대신 resolveApiKey — 커넥터 URL(?opendart_key=),
  *     set_api_key, OPENDART_API_KEY를 모두 인식한다. DART_API_KEY만 읽으면
  *     URL로 키를 넘기는 배포본에서 모든 호출이 "키가 없습니다"로 끝난다.
@@ -86,45 +86,55 @@ export function ttmPair(get: (y: number, rc: RC) => Stmt | undefined, y: number,
   return { cur, base };
 }
 
-const growth = (cur: number | null, base: number | null) =>
-  cur == null || base == null || base <= 0 || cur <= 0 ? null : (cur / base - 1) * 100;
+export type Note = "" | "결측" | "매출≤0";
+
+/**
+ * 2국면 = OPM(t) > OPM(t−4). OPM은 TTM 합계끼리 나눈 값.
+ * 결측이나 TTM 매출 ≤ 0이면 불성립이 아니라 판정 불가(ok=null)다.
+ */
+export function phase2(revBase: number | null, opBase: number | null, revCur: number | null, opCur: number | null) {
+  if (![revBase, opBase, revCur, opCur].every((x) => x != null && Number.isFinite(x)))
+    return { ok: null, opmBase: null, opm: null, note: "결측" as Note };
+  if ((revBase as number) <= 0 || (revCur as number) <= 0)
+    return { ok: null, opmBase: null, opm: null, note: "매출≤0" as Note };
+  const opmBase = (opBase as number) / (revBase as number), opm = (opCur as number) / (revCur as number);
+  return { ok: opm > opmBase, opmBase, opm, note: "" as Note };
+}
+
+export type Status = "NEW" | "CONTINUE" | "LOST" | "NONE" | "NA_PREV" | "NA";
 
 export interface Verdict {
   corp: string; name: string; fs: "CFS" | "OFS" | "-";
-  prevRev: number | null; prevOp: number | null; curRev: number | null; curOp: number | null;
+  /** OPM(t−4), OPM(t), OPM(t−5), OPM(t−1) — 비율(0.1 = 10%) */
+  opmBase: number | null; opm: number | null; prevOpmBase: number | null; prevOpm: number | null;
   qoq: boolean | null; ttmRev: number | null; ttmOp: number | null;
-  status: "NEW_ACCEL" | "NEW_RECOVERY" | "CONTINUE" | "LOST" | "NONE" | "NA"; note: string;
+  status: Status; note: Note;
 }
 
-export function judge(store: Store, corp: string, name: string, y: number, q: number, revFloor: number): Verdict {
+export function judge(store: Store, corp: string, name: string, y: number, q: number): Verdict {
   const [py, pq] = prevQuarter(y, q);
-  const need = [...reportsFor(y, q), ...reportsFor(py, pq)];
-  const has = (fs: "CFS" | "OFS") =>
+  const cur = reportsFor(y, q), prev = reportsFor(py, pq);
+  const has = (fs: "CFS" | "OFS", need: Array<[number, RC]>) =>
     need.every(([yy, rc]) => { const s = store.get(`${yy}-${rc}`)?.get(corp)?.[fs]; return s?.rev && s?.op; });
-  const fs: "CFS" | "OFS" | null = has("CFS") ? "CFS" : has("OFS") ? "OFS" : null;
-  const blank: Verdict = { corp, name, fs: "-", prevRev: null, prevOp: null, curRev: null, curOp: null,
-    qoq: null, ttmRev: null, ttmOp: null, status: "NA", note: "" };
-  if (!fs) return { ...blank, note: "보고서/계정 누락(결산월 상이·금융업 등)" };
+  // 두 분기 모두 갖춘 기준을 우선(연결 → 별도), 없으면 대상 분기만이라도 갖춘 기준
+  const FS = ["CFS", "OFS"] as const;
+  const fs = FS.find((f) => has(f, [...cur, ...prev])) ?? FS.find((f) => has(f, cur)) ?? null;
+  const blank: Verdict = { corp, name, fs: "-", opmBase: null, opm: null, prevOpmBase: null, prevOpm: null,
+    qoq: null, ttmRev: null, ttmOp: null, status: "NA", note: "결측" };
+  if (!fs) return blank;
 
   const get = (yy: number, rc: RC) => store.get(`${yy}-${rc}`)?.get(corp)?.[fs];
   const rC = ttmPair(get, y, q, "rev"), oC = ttmPair(get, y, q, "op");
   const rP = ttmPair(get, py, pq, "rev"), oP = ttmPair(get, py, pq, "op");
-  const v: Verdict = { ...blank, fs,
-    curRev: growth(rC.cur, rC.base), curOp: growth(oC.cur, oC.base),
-    prevRev: growth(rP.cur, rP.base), prevOp: growth(oP.cur, oP.base),
-    ttmRev: rC.cur, ttmOp: oC.cur };
+  const now = phase2(rC.base, oC.base, rC.cur, oC.cur);
+  const before = phase2(rP.base, oP.base, rP.cur, oP.cur);
+  const v: Verdict = { ...blank, fs, note: "",
+    opmBase: now.opmBase, opm: now.opm, prevOpmBase: before.opmBase, prevOpm: before.opm,
+    qoq: phase2(rP.cur, oP.cur, rC.cur, oC.cur).ok, ttmRev: rC.cur, ttmOp: oC.cur };
 
-  if (v.curRev == null || v.curOp == null || v.prevRev == null || v.prevOp == null) {
-    const neg = [oC.cur, oC.base, oP.cur, oP.base].some((x) => x != null && x <= 0);
-    return { ...v, status: "NA", note: neg ? "영업이익 적자/기저 음수" : "증가율 계산 불가" };
-  }
-  const qr = growth(rC.cur, rP.cur), qo = growth(oC.cur, oP.cur);
-  v.qoq = qr == null || qo == null ? null : qo > qr;
-
-  const nowOk = v.curOp > v.curRev, prevOk = v.prevOp > v.prevRev;
-  v.status = nowOk && !prevOk ? (v.prevOp >= 0 ? "NEW_ACCEL" : "NEW_RECOVERY")
-    : nowOk && prevOk ? "CONTINUE" : !nowOk && prevOk ? "LOST" : "NONE";
-  if (nowOk && v.curRev < revFloor) v.note = "LOWREV";
+  if (now.ok == null) return { ...v, status: "NA", note: now.note };
+  if (before.ok == null) return { ...v, status: "NA_PREV", note: before.note };
+  v.status = now.ok ? (before.ok ? "CONTINUE" : "NEW") : (before.ok ? "LOST" : "NONE");
   return v;
 }
 
@@ -167,27 +177,37 @@ async function pool<T>(tasks: Array<() => Promise<T>>, n = 4) {
 
 // ───────────────────────── 출력 ─────────────────────────
 
-const pct = (x: number | null) => (x == null ? "-" : `${x >= 0 ? "+" : ""}${x.toFixed(1)}`);
+/** 음수는 ASCII "-" (U+2212 아님) */
+const opmPct = (x: number | null) => (x == null ? "-" : (x * 100).toFixed(1));
+const dPp = (a: number | null, b: number | null) => {
+  if (a == null || b == null) return "-";
+  const d = (b - a) * 100;
+  return `${d > 0 ? "+" : d < 0 ? "-" : ""}${Math.abs(d).toFixed(1)}`;
+};
 const eok = (x: number | null) => (x == null ? "-" : Math.round(x / 1e8).toLocaleString("ko-KR"));
-const LABEL: Record<Verdict["status"], string> = { NEW_ACCEL: "신규·가속", NEW_RECOVERY: "신규·회복",
-  CONTINUE: "유지", LOST: "이탈", NONE: "미충족", NA: "판정불가" };
+const ORDER: Status[] = ["NEW", "CONTINUE", "LOST", "NONE", "NA_PREV", "NA"];
+const LABEL: Record<Status, string> = { NEW: "신규 전환", CONTINUE: "지속", LOST: "이탈", NONE: "미성립",
+  NA_PREV: "판정 불가(전기)", NA: "판정 불가" };
 
 export function render(vs: Verdict[], y: number, q: number, output: "new" | "all", unresolved: string[]) {
   const [py, pq] = prevQuarter(y, q);
-  const cnt = (s: Verdict["status"]) => vs.filter((v) => v.status === s).length;
+  const cnt = (s: Status) => vs.filter((v) => v.status === s).length;
   const lines = [
-    `2국면 전환 판정 · ${py}Q${pq} → ${y}Q${q} · TTM YoY · [1차] DART fnlttMultiAcnt`,
-    `대상 ${vs.length} | 신규·가속 ${cnt("NEW_ACCEL")} | 신규·회복 ${cnt("NEW_RECOVERY")} | 유지 ${cnt("CONTINUE")} | 이탈 ${cnt("LOST")} | 미충족 ${cnt("NONE")} | 판정불가 ${cnt("NA")}`,
+    `2국면 전환 판정 · ${py}Q${pq} → ${y}Q${q} · 2국면 = TTM OPM(t) > OPM(t−4) · QoQ = OPM(t) > OPM(t−1) · [1차] DART fnlttMultiAcnt`,
+    `대상 ${vs.length} | ${ORDER.map((s) => `${LABEL[s]} ${cnt(s)}`).join(" | ")}`,
   ];
   if (unresolved.length) lines.push(`코드 변환 실패: ${unresolved.join(", ")}`);
-  const rows = vs.filter((v) => output === "all" || v.status === "NEW_ACCEL" || v.status === "NEW_RECOVERY");
-  lines.push("", `| 종목 | 기준 | 판정 | 직전 매출/영익(%) | 대상 매출/영익(%) | QoQ | TTM매출(억) | TTM영익(억) | 비고 |`,
-    `|---|---|---|---|---|---|---|---|---|`);
-  for (const v of rows.sort((a, b) => a.status.localeCompare(b.status)))
-    lines.push(`| ${v.name} | ${v.fs} | ${LABEL[v.status]} | ${pct(v.prevRev)} / ${pct(v.prevOp)} | ${pct(v.curRev)} / ${pct(v.curOp)} | ${v.qoq == null ? "-" : v.qoq ? "○" : "×"} | ${eok(v.ttmRev)} | ${eok(v.ttmOp)} | ${v.note} |`);
+  const rows = vs.filter((v) => output === "all" || v.status === "NEW")
+    .sort((a, b) => ORDER.indexOf(a.status) - ORDER.indexOf(b.status));
+  lines.push("", `| 종목 | 기준 | 판정 | OPM(t−4)(%) | OPM(t)(%) | ΔOPM(%p) | QoQ | TTM매출(억) | TTM영익(억) | 비고 |`,
+    `|---|---|---|---|---|---|---|---|---|---|`);
+  for (const v of rows)
+    lines.push(`| ${v.name} | ${v.fs} | ${LABEL[v.status]} | ${opmPct(v.opmBase)} | ${opmPct(v.opm)} | ${dPp(v.opmBase, v.opm)} | ${v.qoq == null ? "-" : v.qoq ? "○" : "×"} | ${eok(v.ttmRev)} | ${eok(v.ttmOp)} | ${v.note} |`);
   if (output === "new") {
-    const na = vs.filter((v) => v.status === "NA");
-    if (na.length) lines.push("", `판정불가: ${na.map((v) => `${v.name}(${v.note})`).join(", ")}`);
+    for (const s of ["NA_PREV", "NA"] as const) {
+      const na = vs.filter((v) => v.status === s);
+      if (na.length) lines.push("", `${LABEL[s]}: ${na.map((v) => `${v.name}(${v.note})`).join(", ")}`);
+    }
   }
   return lines.join("\n");
 }
@@ -200,14 +220,13 @@ export function registerPhase2Screen(server: McpServer) {
     {
       title: "2국면 전환 판정 (Phase-2 Screen)",
       description:
-        "여러 종목의 2국면(TTM 영업이익 증가율 > TTM 매출액 증가율) 전환 여부를 서버에서 계산해 회사당 한 줄로 반환한다. " +
+        "여러 종목의 2국면(TTM OPM이 4분기 전 TTM 대비 상승) 성립과 신규 전환 여부를 서버에서 계산해 회사당 한 줄로 반환한다. " +
         "items에 종목명·6자리 종목코드·8자리 corp_code를 섞어 넣을 수 있다(최대 500). 원자료 재무표를 가져오지 않으므로 대량 스크리닝은 반드시 이 도구를 쓴다.",
       inputSchema: {
         items: z.string().describe("쉼표/줄바꿈 구분. 종목명(정확 일치), 종목코드 6자리, corp_code 8자리 혼용 가능"),
         year: z.number().int().describe("대상 분기의 연도 (예: 2026)"),
-        quarter: z.number().int().min(1).max(4).describe("대상 분기 (1~4). 직전 분기와 비교해 전환 여부 판정"),
+        quarter: z.number().int().min(1).max(4).describe("대상 분기 (1~4). 2국면은 4분기 전 TTM과 비교하고, 신규 전환은 직전 분기의 2국면 상태와 비교해 판정한다."),
         output: z.enum(["new", "all"]).default("new").describe("new=신규 전환 종목만 표로, all=전 종목"),
-        rev_floor: z.number().default(3).describe("대상 분기 매출 증가율이 이 값(%) 미만이면 LOWREV 표시"),
         api_key: z.string().optional().describe("Optional: your own OpenDART API key"),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
@@ -238,7 +257,7 @@ export function registerPhase2Screen(server: McpServer) {
         }));
         await pool(tasks, 4);
 
-        const verdicts = corps.map((c) => judge(store, c, idx.byCorp.get(c)!.name, a.year, a.quarter, a.rev_floor));
+        const verdicts = corps.map((c) => judge(store, c, idx.byCorp.get(c)!.name, a.year, a.quarter));
         return { content: [{ type: "text" as const, text: render(verdicts, a.year, a.quarter, a.output, unresolved) }] };
       } catch (err) {
         return { content: [{ type: "text" as const, text: formatApiError(err) }], isError: true };
