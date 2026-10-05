@@ -170,7 +170,16 @@ Args:
     "opendart_full_financial_statement",
     "전체 재무제표 (Full Financial Statement)",
     `Get the complete financial statement with all account line items for a company.
-Returns comprehensive BS, IS, CF data. May return many rows.
+Returns BS, IS, CIS and CF tables (자본변동표/SCE is left out). May return many rows.
+
+※ 분기·반기 보고서:
+  - 손익·포괄손익은 '3개월'과 '누계'가 별도 열이다. 기간 누계 수치는 '누계' 열에서 읽을 것.
+  - 현금흐름표는 누계로만 공시되므로 '당기 누계'·'전기 누계' 열만 있다.
+    순이익과 영업활동현금흐름을 비교할 때는 둘 다 누계 열을 쓸 것.
+※ 같은 계정명이 여러 번 나오면 행 이름 뒤에 [account_id]가 붙는다.
+  예) 지배기업 소유주지분 [ProfitLossAttributableToOwnersOfParent · 당기순이익 귀속]
+      지배기업 소유주지분 [ComprehensiveIncomeAttributableToOwnersOfParent · 총포괄손익 귀속]
+  지배기업 귀속 순이익은 앞의 것이다.
 
 Args:
   - corp_code, bsns_year, reprt_code, fs_div`,
@@ -179,7 +188,7 @@ Args:
     (data, context) => formatFinancialTableMd(
       data.list as Array<Record<string, unknown>>,
       "전체 재무제표 (Full Statement)",
-      { groupByFsDiv: true, context }
+      { groupByFsDiv: true, context, fullStatement: true }
     )
   );
 

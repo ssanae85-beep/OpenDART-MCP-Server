@@ -223,6 +223,21 @@ const scoped = findInDocument(fdoc, "충당부채", 15, findSection(fdoc, "나. 
 check("scope limits results", scoped.groups.length, 1);
 check("scope label", scoped.scope, "2. 나. 둘째 섹션");
 
+console.log("\n--- find ignores whitespace ---");
+const WS_SAMPLE = `<?xml version="1.0" encoding="utf-8"?>
+<DOCUMENT><BODY><LIBRARY>
+<SECTION-1><TITLE>가. 금융상품</TITLE><P>단기금융상품은 정기예금등으로 구성됩니다.</P><TABLE><TR><TD>정기예금</TD><TD>등</TD></TR></TABLE><P>사용제한: 정기예금 등 담보</P></SECTION-1>
+</LIBRARY></BODY></DOCUMENT>`;
+const wdoc = parseDocument(WS_SAMPLE);
+const wsec = wdoc.sections[0];
+const wtext = getSectionText(wdoc, wsec);
+const ws = findInDocument(wdoc, "정기예금 등", 15);
+check("'정기예금 등' matches 정기예금등 / cell break / spaced", ws.totalHits, 3);
+check("query without the space finds the same", findInDocument(wdoc, "정기예금등", 15).totalHits, 3);
+check("every offset lands on the original text", ws.groups[0].offsets.every((o) => wtext.slice(o).startsWith("정기예금")), true);
+check("snippet is the original text, spaces kept", ws.groups[0].snippet.includes("정기예금등으로 구성됩니다"), true);
+check("whitespace-only query finds nothing", findInDocument(wdoc, "   ", 15).totalHits, 0);
+
 console.log("\n--- misc ---");
 check("no match -> null", findSection(doc, "존재하지않는섹션"), null);
 check("entity &amp;", extractText("<P>R&amp;D</P>"), "R&D");

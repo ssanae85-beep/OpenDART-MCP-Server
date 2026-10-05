@@ -2,7 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { getJson, resolveApiKey } from "@/lib/opendart/client";
 import { formatApiError, isNoData } from "@/lib/opendart/errors";
-import { formatGenericTableMd } from "@/lib/opendart/formatters";
+import { formatGenericTableMd, formatTotalSharesMd } from "@/lib/opendart/formatters";
 
 const periodicParams = {
   corp_code: z.string().length(8).describe("8-digit company code"),
@@ -23,7 +23,7 @@ function registerPeriodicTool(
   title: string,
   description: string,
   endpoint: string,
-  columns: Array<{ key: string; label: string }>
+  columns: Array<{ key: string; label: string }> | ((items: Array<Record<string, unknown>>, title: string) => string)
 ) {
   server.registerTool(
     name,
@@ -42,7 +42,7 @@ function registerPeriodicTool(
         }
 
         const items = data.list as Array<Record<string, unknown>>;
-        const md = formatGenericTableMd(items, title, columns);
+        const md = typeof columns === "function" ? columns(items, title) : formatGenericTableMd(items, title, columns);
         return { content: [{ type: "text" as const, text: md }] };
       } catch (err) {
         return { content: [{ type: "text" as const, text: formatApiError(err) }], isError: true };
@@ -153,11 +153,9 @@ export function registerDisclosureTools(server: McpServer) {
   // --- Shares & Treasury ---
   registerPeriodicTool(server,
     "opendart_total_shares", "주식 총수 (Total Shares)",
-    "Get total outstanding shares by type.\nArgs: corp_code, bsns_year, reprt_code",
+    "Get share counts by class (보통주·우선주·합계): 발행할 주식의 총수(authorized, isu_stock_totqy), 발행주식의 총수(issued, istc_totqy), 자기주식수(tesstk_co), 유통주식수(distb_stock_co).\n시가총액·주당 지표에는 '발행주식의 총수'를 쓸 것 — '발행할 주식의 총수'는 정관상 수권주식수다.\n합계는 원문 값 그대로이며, 보통+우선과 다르면 비고에 '원문 합계 불일치'.\nArgs: corp_code, bsns_year, reprt_code",
     "stockTotqySttus",
-    [{ key: "se", label: "구분" }, { key: "isu_stock_totqy", label: "발행주식총수" },
-     { key: "now_to_isu_stock_totqy", label: "현재상장주식수" },
-     { key: "now_to_dcrs_stock_co", label: "현재감소주식수" }]
+    formatTotalSharesMd
   );
 
   registerPeriodicTool(server,

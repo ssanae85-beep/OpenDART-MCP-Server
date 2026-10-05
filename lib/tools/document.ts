@@ -269,7 +269,7 @@ Args:
   - rcept_no: 14-digit receipt number (접수번호, e.g. "20240312000736")
   - mode (optional): "toc" | "find" | "section" | "full" (default: "toc")
   - section (required when mode="section"): TOC number (e.g. "3") or title keyword (e.g. "사업의 내용"). Optional with mode="find" to limit the search.
-  - query (required when mode="find"): keyword to locate, e.g. "충당부채"
+  - query (required when mode="find"): keyword to locate, e.g. "충당부채". Whitespace is ignored when matching ("정기예금 등" also finds "정기예금등"); hits are shown as the original text.
   - attachment (optional): which document in the filing — number (e.g. "2") or name (e.g. "감사보고서"). Defaults to the main report.
   - offset (optional): Start this many characters into the text (default: 0). Use the offset a truncated response reports.
   - max_chars (optional): Response character cap (default: ${DEFAULT_MAX_CHARS}, max: ${HARD_MAX_CHARS})

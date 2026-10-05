@@ -296,6 +296,27 @@ export interface FindResult {
   scope: string;
 }
 
+/**
+ * Lower-cased text with every whitespace character removed, plus the index in
+ * the original of each remaining code unit — so a hit in the compact form maps
+ * back to an offset the caller can read from. The " | " that extractText puts
+ * between table cells is ours, not the filing's, so it goes too: "정기예금 등"
+ * split over two cells still matches.
+ */
+function compactText(text: string): { compact: string; origin: number[] } {
+  let compact = "";
+  const origin: number[] = [];
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (/\s/.test(ch)) continue;
+    if (ch === "|" && text[i - 1] === " " && text[i + 1] === " ") continue;
+    const lc = ch.toLowerCase();
+    compact += lc;
+    for (let k = 0; k < lc.length; k++) origin.push(i);
+  }
+  return { compact, origin };
+}
+
 const SNIPPET_BEFORE = 60;
 const SNIPPET_AFTER = 140;
 
@@ -312,8 +333,12 @@ export function findInDocument(
   maxGroups: number,
   within?: DocSection
 ): FindResult {
-  const q = query.trim().toLowerCase();
+  // Whitespace is ignored on both sides: filings break "정기예금 등" across table
+  // cells and lines, or write it "정기예금등". Offsets and snippets still point
+  // into the original text.
+  const q = query.replace(/\s+/g, "").toLowerCase();
   const groups: FindGroup[] = [];
+  if (q === "") return { groups, totalHits: 0, scope: within ? `${within.index}. ${within.title}` : "전체 문서" };
   let totalHits = 0;
 
   for (let i = 0; i < doc.sections.length; i++) {
@@ -325,7 +350,7 @@ export function findInDocument(
     if (to <= from) continue;
 
     const text = extractText(doc.raw.slice(from, to));
-    const haystack = text.toLowerCase();
+    const { compact: haystack, origin } = compactText(text);
 
     const offsets: number[] = [];
     let snippet = "";
@@ -333,13 +358,15 @@ export function findInDocument(
     let idx = haystack.indexOf(q);
     while (idx !== -1) {
       totalHits++;
+      const start = origin[idx];
       if (offsets.length === 0) {
+        const end = origin[idx + q.length - 1] + 1;
         snippet = text
-          .slice(Math.max(0, idx - SNIPPET_BEFORE), idx + q.length + SNIPPET_AFTER)
+          .slice(Math.max(0, start - SNIPPET_BEFORE), end + SNIPPET_AFTER)
           .replace(/\s+/g, " ")
           .trim();
       }
-      if (offsets.length < 20) offsets.push(idx);
+      if (offsets.length < 20) offsets.push(start);
       idx = haystack.indexOf(q, idx + q.length);
     }
 
