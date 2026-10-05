@@ -214,6 +214,77 @@ check("filed value stated, and that it equals 총포괄 귀속", tnl.includes("�
 check("총포괄손익 귀속 line untouched", tnl.includes("[ComprehensiveIncomeAttributableToOwnersOfParent · 총포괄손익 귀속] | 7,593,343,939 |"), true);
 check("consistent filing (삼성전자) is not touched", fullH1.includes("※ | 71,269,468,000,000") || fullH1.includes("원문 값("), false);
 
+// ─── trigger conditions, pinned ───
+// Verbatim rows (live API, trimmed to the lines the two corrections read).
+const tnlQ1 = { reprt_code: "11013", bsns_year: "2026", corp_code: "00608440" };
+const TNL_Q1 = [
+  { ...tnlQ1, sj_div: "CIS", sj_nm: "포괄손익계산서", account_id: "ifrs-full_ProfitLoss", account_nm: "당기순이익(손실)", thstrm_nm: "제 29 기 1분기", thstrm_amount: "16441189305", thstrm_add_amount: "16441189305", frmtrm_q_nm: "제 28 기 1분기", frmtrm_q_amount: "15852688344", frmtrm_add_amount: "15852688344" },
+  { ...tnlQ1, sj_div: "CIS", sj_nm: "포괄손익계산서", account_id: "ifrs-full_ProfitLossAttributableToNoncontrollingInterests", account_nm: "비지배지분에 귀속되는 당기순이익(손실)", thstrm_nm: "제 29 기 1분기", thstrm_amount: "0", thstrm_add_amount: "0", frmtrm_q_nm: "제 28 기 1분기", frmtrm_q_amount: "0", frmtrm_add_amount: "0" },
+  { ...tnlQ1, sj_div: "CIS", sj_nm: "포괄손익계산서", account_id: "ifrs-full_ProfitLossAttributableToOwnersOfParent", account_nm: "지배기업의 소유주에게 귀속되는 당기순이익(손실)", thstrm_nm: "제 29 기 1분기", thstrm_amount: "16441189305", thstrm_add_amount: "16441189305", frmtrm_q_nm: "제 28 기 1분기", frmtrm_q_amount: "15852688344", frmtrm_add_amount: "15852688344" },
+  { ...tnlQ1, sj_div: "CF", sj_nm: "현금흐름표", account_id: "ifrs-full_CashFlowsFromUsedInOperatingActivities", account_nm: "영업활동현금흐름", thstrm_nm: "제 29 기 1분기", thstrm_amount: "8778547393", frmtrm_q_nm: "제 28 기 1분기", frmtrm_q_amount: "7842723131" },
+  { ...tnlQ1, sj_div: "CF", sj_nm: "현금흐름표", account_id: "ifrs-full_ProfitLoss", account_nm: "당기순이익(손실)", thstrm_nm: "제 29 기 1분기", thstrm_amount: "16441189305", frmtrm_q_nm: "제 28 기 1분기", frmtrm_q_amount: "15852688344" },
+];
+const tnlFy = { reprt_code: "11011", bsns_year: "2025", corp_code: "00608440" };
+const TNL_FY = [
+  { ...tnlFy, sj_div: "CIS", sj_nm: "포괄손익계산서", account_id: "ifrs-full_ProfitLoss", account_nm: "당기순이익(손실)", thstrm_nm: "제 28 기", thstrm_amount: "38074883027", thstrm_add_amount: "", frmtrm_nm: "제 27 기", frmtrm_amount: "46407511867", bfefrmtrm_nm: "제 26 기", bfefrmtrm_amount: "27438682343" },
+  { ...tnlFy, sj_div: "CIS", sj_nm: "포괄손익계산서", account_id: "ifrs-full_ProfitLossAttributableToNoncontrollingInterests", account_nm: "비지배지분에 귀속되는 당기순이익(손실)", thstrm_nm: "제 28 기", thstrm_amount: "0", thstrm_add_amount: "", frmtrm_nm: "제 27 기", frmtrm_amount: "0", bfefrmtrm_nm: "제 26 기", bfefrmtrm_amount: "0" },
+  { ...tnlFy, sj_div: "CIS", sj_nm: "포괄손익계산서", account_id: "ifrs-full_ProfitLossAttributableToOwnersOfParent", account_nm: "지배기업의 소유주에게 귀속되는 당기순이익(손실)", thstrm_nm: "제 28 기", thstrm_amount: "38074883027", thstrm_add_amount: "", frmtrm_nm: "제 27 기", frmtrm_amount: "46407511867", bfefrmtrm_nm: "제 26 기", bfefrmtrm_amount: "27438682343" },
+  { ...tnlFy, sj_div: "CF", sj_nm: "현금흐름표", account_id: "ifrs-full_CashFlowsFromUsedInOperatingActivities", account_nm: "영업활동현금흐름", thstrm_nm: "제 28 기", thstrm_amount: "37691797461", frmtrm_nm: "제 27 기", frmtrm_amount: "46569584536", bfefrmtrm_nm: "제 26 기", bfefrmtrm_amount: "32591101671" },
+  { ...tnlFy, sj_div: "CF", sj_nm: "현금흐름표", account_id: "ifrs-full_ProfitLoss", account_nm: "당기순이익(손실)", thstrm_nm: "제 28 기", thstrm_amount: "38074883027", frmtrm_nm: "제 27 기", frmtrm_amount: "46407511867", bfefrmtrm_nm: "제 26 기", bfefrmtrm_amount: "27438682343" },
+];
+// SYTS 2026 반기 연결: 지배 귀속 line present, no 비지배 line at all
+const sy = { reprt_code: "11012", bsns_year: "2026", corp_code: "00127042" };
+const SYTS_H1 = [
+  { ...sy, sj_div: "CIS", sj_nm: "포괄손익계산서", account_id: "ifrs-full_ProfitLoss", account_nm: "당기순이익", thstrm_nm: "제 66 기 반기", thstrm_amount: "6482148350", thstrm_add_amount: "9608693103", frmtrm_q_nm: "제 65 기 반기", frmtrm_q_amount: "5203145938", frmtrm_add_amount: "8411708703" },
+  { ...sy, sj_div: "CIS", sj_nm: "포괄손익계산서", account_id: "ifrs-full_ProfitLossAttributableToOwnersOfParent", account_nm: "지배기업의 소유주에게 귀속되는 당기순이익", thstrm_nm: "제 66 기 반기", thstrm_amount: "6482148350", thstrm_add_amount: "9608693103", frmtrm_q_nm: "제 65 기 반기", frmtrm_q_amount: "5203145938", frmtrm_add_amount: "8411708703" },
+  { ...sy, sj_div: "CF", sj_nm: "현금흐름표", account_id: "ifrs-full_CashFlowsFromUsedInOperatingActivities", account_nm: "영업활동으로 인한 현금흐름", thstrm_nm: "제 66 기 반기", thstrm_amount: "16986083100", frmtrm_q_nm: "제 65 기 반기", frmtrm_q_amount: "9665116455" },
+  { ...sy, sj_div: "CF", sj_nm: "현금흐름표", account_id: "ifrs-full_ProfitLoss", account_nm: "당기순이익", thstrm_nm: "제 66 기 반기", thstrm_amount: "6482148350", frmtrm_q_nm: "제 65 기 반기", frmtrm_q_amount: "5203145938" },
+];
+const render = (rows: Array<Record<string, unknown>>, reprt_code: string) =>
+  formatFinancialTableMd(rows, "전체 재무제표", { context: { reprt_code, fs_div: "CFS" }, fullStatement: true });
+
+console.log("\n=== CF 순이익 대체: 1분기 never (티앤엘 2026 1분기) ===");
+const q1 = render(TNL_Q1, "11013");
+check("no ※ anywhere", q1.includes("※"), false);
+check("no substitution note", q1.includes("API가 손익계산서 3개월 값"), false);
+check("CF 순이익 shown as filed", tableOf(q1, "현금흐름표").includes("| 당기순이익(손실) | 16,441,189,305 | 15,852,688,344 |"), true);
+// Gate on the report code, not on the data: even a 1분기 whose IS 누계 differed
+// from its 3개월 must not be touched.
+// (지배 line forged alongside so 지배 + 비지배 = 당기순이익 still holds)
+const q1Forged = render(TNL_Q1.map((r) => (r.sj_div === "CIS" && /_ProfitLoss$|_ProfitLossAttributableToOwnersOfParent$/.test(r.account_id) ? { ...r, thstrm_add_amount: "99999999999" } : r)), "11013");
+check("1분기 stays untouched even if 3개월 ≠ 누계", q1Forged.includes("※") || q1Forged.includes("API가 손익계산서 3개월 값"), false);
+
+console.log("\n=== CF 순이익 대체: 사업보고서 never (티앤엘 2025) ===");
+const fy = render(TNL_FY, "11011");
+check("no ※ anywhere", fy.includes("※"), false);
+check("annual CF keeps 당기/전기/전전기 and the filed value", tableOf(fy, "현금흐름표").includes("| 당기순이익(손실) | 38,074,883,027 | 46,407,511,867 | 27,438,682,343 |"), true);
+const fyForged = render(TNL_FY.map((r) => (r.sj_div === "CIS" && r.account_id === "ifrs-full_ProfitLoss" ? { ...r, thstrm_add_amount: "99999999999" } : r)), "11011");
+check("사업보고서 stays untouched even with a stray 누계", fyForged.includes("※") || fyForged.includes("API가 손익계산서 3개월 값"), false);
+
+console.log("\n=== CF 순이익 대체: 3분기 fires, other CF lines never ===");
+const q3fix = render(SYTS_H1.map((r) => ({ ...r, reprt_code: "11014" })), "11014");
+check("3분기 with CF = IS 3개월 ≠ 누계 → 누계 shown", tableOf(q3fix, "현금흐름표").includes("| 당기순이익 ※ | 9,608,693,103 | 8,411,708,703 |"), true);
+const offByOne = render(SYTS_H1.map((r) => (r.sj_div === "CF" && r.account_id === "ifrs-full_ProfitLoss" ? { ...r, thstrm_amount: "6482148351", frmtrm_q_amount: "5203145939" } : r)), "11012");
+check("CF 순이익 1원 off the IS 3개월 → no substitution", tableOf(offByOne, "현금흐름표").includes("| 당기순이익 | 6,482,148,351 | 5,203,145,939 |"), true);
+const otherLine = render([
+  ...SYTS_H1,
+  { ...sy, sj_div: "CIS", sj_nm: "포괄손익계산서", account_id: "ifrs-full_IncomeTaxExpenseContinuingOperations", account_nm: "법인세비용", thstrm_amount: "100", thstrm_add_amount: "250", frmtrm_q_amount: "90", frmtrm_add_amount: "200" },
+  { ...sy, sj_div: "CF", sj_nm: "현금흐름표", account_id: "ifrs-full_IncomeTaxExpenseContinuingOperations", account_nm: "법인세비용", thstrm_amount: "100", frmtrm_q_amount: "90" },
+], "11012");
+check("only the 순이익 line is ever substituted", tableOf(otherLine, "현금흐름표").includes("| 법인세비용 | 100 | 90 |"), true);
+
+console.log("\n=== 지배 귀속 재계산: 비지배 행 없음 (SYTS 2026 반기) ===");
+const sytsT = render(SYTS_H1, "11012");
+console.log(sytsT);
+const sytsCis = tableOf(sytsT, "포괄손익계산서");
+check("filed value kept, no ※ on the parent line", sytsCis.includes("| 지배기업의 소유주에게 귀속되는 당기순이익 [ProfitLossAttributableToOwnersOfParent · 당기순이익 귀속] | 6,482,148,350 | 9,608,693,103 | 5,203,145,938 | 8,411,708,703 |"), true);
+check("noted 비지배 행 없음 · 검산 불가", sytsCis.includes("- 지배기업의 소유주에게 귀속되는 당기순이익: 비지배 행 없음 · 검산 불가"), true);
+check("no recalculation note", sytsCis.includes("당기순이익 − 비지배로 표시"), false);
+check("its CF 순이익 (반기, = IS 3개월) is still corrected", tableOf(sytsT, "현금흐름표").includes("| 당기순이익 ※ | 9,608,693,103 | 8,411,708,703 |"), true);
+check("consistent 지배+비지배 (티앤엘 1분기) → no recalculation", q1.includes("당기순이익 − 비지배로 표시") || q1.includes("검산 불가"), false);
+const noPl = render(SYTS_H1.filter((r) => !(r.sj_div === "CIS" && r.account_id === "ifrs-full_ProfitLoss")), "11012");
+check("no 당기순이익 line → neither recalculated nor noted", noPl.includes("당기순이익 − 비지배로 표시") || noPl.includes("검산 불가"), false);
+
 console.log("\n=== full statement, annual: CF keeps plain 당기/전기 ===");
 const fullFy = formatFinancialTableMd([
   { ...H, reprt_code: "11011", sj_div: "CF", sj_nm: "현금흐름표", account_id: "ifrs-full_CashFlowsFromUsedInOperatingActivities", account_nm: "영업활동현금흐름", thstrm_amount: "10", frmtrm_amount: "9", bfefrmtrm_amount: "8" },

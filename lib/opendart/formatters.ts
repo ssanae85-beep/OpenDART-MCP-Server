@@ -322,27 +322,40 @@ function cleanFullStatement(rows: Array<Record<string, unknown>>) {
   });
 }
 
+const amount = (v: unknown): number | null => {
+  const t = str(v).replace(/,/g, "").trim();
+  return /^-?\d+$/.test(t) ? Number(t) : null;
+};
+
+/** Reports whose 3-month and 누계 figures differ: 반기 and 3분기 only */
+const CF_FIX_REPORTS = new Set(["11012", "11014"]);
+
 /**
- * fnlttSinglAcntAll fills a quarterly CF line that shares its account_id with
- * the income statement (반기순이익 = ifrs-full_ProfitLoss) with the IS three-month
- * figure, not the cumulative one the cash flow statement is built on: 삼성전자
- * 2026 반기 CF 반기순이익 comes back 71.6조 (Q2 alone) while the statement
- * reconciles to OCF only with 118.8조 (H1). Where a CF value equals the IS
- * 3-month figure and not its 누계, the IS 누계 is shown instead — and said so.
+ * fnlttSinglAcntAll fills the quarterly CF 순이익 line (ifrs-full_ProfitLoss,
+ * shared with the income statement) with the IS three-month figure, not the
+ * cumulative one the cash flow statement is built on: 삼성전자 2026 반기 CF
+ * 반기순이익 comes back 71.6조 (Q2 alone) while the statement reconciles to OCF
+ * only with 118.8조 (H1). The IS 누계 is shown instead — and said so.
+ *
+ * Fires only when ALL hold, per column:
+ *   1. the report is 반기(11012) or 3분기(11014) — never 1분기(11013), where
+ *      3개월 = 누계, and never 사업보고서(11011)
+ *   2. the CF 순이익 line (ifrs-full_ProfitLoss) equals, to the won, the IS
+ *      순이익 3개월 figure of the same period
+ *   3. that IS 3개월 figure differs from the IS 누계
  */
-function fixCfCumulative(cf: Array<Record<string, unknown>>, all: Array<Record<string, unknown>>) {
-  const pl = new Map<string, Record<string, unknown>>();
-  for (const r of all) {
-    const sj = str(r.sj_div), id = str(r.account_id);
-    if ((sj === "IS" || sj === "CIS") && id.includes("_") && !pl.has(id)) pl.set(id, r);
-  }
+function fixCfCumulative(cf: Array<Record<string, unknown>>, all: Array<Record<string, unknown>>, reprtCode: string) {
+  if (!CF_FIX_REPORTS.has(reprtCode)) return { rows: cf, notes: [] as string[] };
+  const isPl =
+    all.find((r) => str(r.sj_div) === "IS" && bareId(str(r.account_id)) === "ProfitLoss") ??
+    all.find((r) => str(r.sj_div) === "CIS" && bareId(str(r.account_id)) === "ProfitLoss");
   const notes: string[] = [];
   const rows = cf.map((r) => {
-    const is = pl.get(str(r.account_id));
+    const is = bareId(str(r.account_id)) === "ProfitLoss" ? isPl : undefined;
     if (!is) return r;
     const swap = (cfKey: string, qKey: string, addKey: string) => {
-      const v = str(r[cfKey]), q = str(is[qKey]), add = str(is[addKey]);
-      return v !== "" && v === q && add !== "" && add !== q ? is[addKey] : undefined;
+      const v = amount(r[cfKey]), q = amount(is[qKey]), add = amount(is[addKey]);
+      return v != null && q != null && add != null && v === q && add !== q ? is[addKey] : undefined;
     };
     const cur = swap("thstrm_amount", "thstrm_amount", "thstrm_add_amount");
     const prev = swap("frmtrm_q_amount", "frmtrm_q_amount", "frmtrm_add_amount");
@@ -359,24 +372,28 @@ function fixCfCumulative(cf: Array<Record<string, unknown>>, all: Array<Record<s
   return { rows, notes };
 }
 
-const amount = (v: unknown): number | null => {
-  const t = str(v).replace(/,/g, "").trim();
-  return /^-?\d+$/.test(t) ? Number(t) : null;
-};
-
 /**
  * 지배기업 귀속 당기순이익 must equal 당기순이익 − 비지배 귀속 당기순이익. Some filings
  * break that by copying the 총포괄손익 귀속 figure into the 당기순이익 귀속 line —
  * 티앤엘 2025 반기 files 75.9억 there against 당기순이익 78.3억 with 비지배 0 — and
- * the API passes it through. In each column where the identity fails, the line
- * shows 당기순이익 − 비지배 instead, and the filed value is stated.
+ * the API passes it through.
+ *
+ * Fires only when the 당기순이익 line and the 비지배 귀속 line both exist and, in
+ * a column, 지배 + 비지배 ≠ 당기순이익 to the won; that column then shows
+ * 당기순이익 − 비지배 and the filed value is stated. With no 비지배 line nothing
+ * is recalculated: the filed value stays, noted "비지배 행 없음 · 검산 불가".
  */
 function fixParentProfit(rows: Array<Record<string, unknown>>) {
   const pick = (id: string) => rows.find((r) => (str(r.sj_div) === "IS" || str(r.sj_div) === "CIS") && bareId(str(r.account_id)) === id);
   const pl = pick("ProfitLoss"), nci = pick("ProfitLossAttributableToNoncontrollingInterests");
   const parent = pick("ProfitLossAttributableToOwnersOfParent"), ci = pick("ComprehensiveIncomeAttributableToOwnersOfParent");
   const notes = new Map<string, string[]>();
-  if (!pl || !nci || !parent) return { rows, notes };
+  if (!pl || !parent) return { rows, notes };
+  // Without the 비지배 line the identity can't be checked: leave the filed value
+  if (!nci) {
+    notes.set(str(parent.sj_div), [`- ${str(parent.account_nm).trim()}: 비지배 행 없음 · 검산 불가`]);
+    return { rows, notes };
+  }
 
   const patch: Record<string, string> = {};
   const filed: string[] = [];
@@ -399,6 +416,7 @@ function fixParentProfit(rows: Array<Record<string, unknown>>) {
 
 interface FullStatementRender {
   quarterly: boolean;
+  reprtCode: string;
   nameOf: (row: Record<string, unknown>) => string;
 }
 
@@ -431,7 +449,7 @@ function renderByStatement(
       ? { nameOf: (r) => `${full.nameOf(r)}${r._fixed ? " ※" : ""}`, notes: [...(notesBySj.get(key) ?? [])] }
       : {};
     if (full?.quarterly && key === "CF") {
-      const fixed = fixCfCumulative(g, rows);
+      const fixed = fixCfCumulative(g, rows, full.reprtCode);
       g = fixed.rows;
       how.cols = CF_CUMULATIVE_COLUMNS;
       how.notes = ["- 현금흐름표는 누계로만 공시된다 — 3개월 열 없음", ...fixed.notes, ...(how.notes ?? [])];
@@ -460,6 +478,7 @@ export function formatFinancialTableMd(
     const code = context?.reprt_code ?? str(items[0].reprt_code);
     full = {
       quarterly: (code !== "" && code !== "11011") || items.some((i) => str(i.thstrm_add_amount) !== ""),
+      reprtCode: code,
       nameOf: accountNamer(items),
     };
     droppedSce = dropped;
